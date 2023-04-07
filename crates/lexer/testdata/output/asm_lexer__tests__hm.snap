@@ -2,26 +2,40 @@
 source: crates/lexer/src/lib.rs
 expression: snapshot
 ---
-main: mov eax, rax
-^^^^ Token(Label, "main", (0,0)->(0,4))
-      ^^^ Token(Instruction, "mov", (0,6)->(0,9))
-          ^^^ Token(Register, "eax", (0,10)->(0,13))
-               ^^^ Token(Register, "rax", (0,15)->(0,18))
-      mov eax, [esp+120 - rax*2]
-      ^^^ Token(Instruction, "mov", (1,6)->(1,9))
-          ^^^ Token(Register, "eax", (1,10)->(1,13))
-               ^ Token(OpenEffectiveAddress, "[", (1,15)->(1,16))
-                ^^^ Token(Label, "esp", (1,16)->(1,19))
-                   ^ Token(Plus, "+", (1,19)->(1,20))
-                    ^^^ Token(Const, "120", (1,20)->(1,23))
-                        ^ Token(Minus, "-", (1,24)->(1,25))
-                          ^^^ Token(Label, "rax", (1,26)->(1,29))
-                             ^ Token(Times, "*", (1,29)->(1,30))
-                              ^ Token(Const, "2", (1,30)->(1,31))
-                               ^ Token(CloseEffectiveAddress, "]", (1,31)->(1,32))
- mai: mov eax, rax
- ^^^ Token(Label, "mai", (2,1)->(2,4))
-      ^^^ Token(Instruction, "mov", (2,6)->(2,9))
-          ^^^ Token(Register, "eax", (2,10)->(2,13))
-               ^^^ Token(Register, "rax", (2,15)->(2,18))
+main: mov eax, rax ; this is a comment
+^^^^ Token { kind: Label, line: 1, col: 1, text: "main" }
+      ^^^ Token { kind: Instruction, line: 1, col: 7, text: "mov" }
+          ^^^ Token { kind: Register, line: 1, col: 11, text: "eax" }
+               ^^^ Token { kind: Register, line: 1, col: 16, text: "rax" }
+                    ^^^^^^^^^^^^^^^^^^ Token { kind: Comment, line: 1, col: 21, text: " this is a comment" }
+      mov ebx, [esp+120 - rax*2]
+      ^^^ Token { kind: Instruction, line: 2, col: 7, text: "mov" }
+          ^^^ Token { kind: Register, line: 2, col: 11, text: "ebx" }
+               ^ Token { kind: OpenEffectiveAddress, line: 2, col: 16, text: "[" }
+                ^^^ Token { kind: Label, line: 2, col: 17, text: "esp" }
+                   ^ Token { kind: Plus, line: 2, col: 20, text: "+" }
+                    ^^^ Token { kind: Number(Decimal), line: 2, col: 21, text: "120" }
+                        ^ Token { kind: Minus, line: 2, col: 25, text: "-" }
+                          ^^^ Token { kind: Label, line: 2, col: 27, text: "rax" }
+                             ^ Token { kind: Times, line: 2, col: 30, text: "*" }
+                              ^ Token { kind: Number(Decimal), line: 2, col: 31, text: "2" }
+                               ^ Token { kind: CloseEffectiveAddress, line: 2, col: 32, text: "]" }
+      mov eax, [somewhere - else ]
+      ^^^ Token { kind: Instruction, line: 3, col: 7, text: "mov" }
+          ^^^ Token { kind: Register, line: 3, col: 11, text: "eax" }
+               ^ Token { kind: OpenEffectiveAddress, line: 3, col: 16, text: "[" }
+                ^^^^^^^^^ Token { kind: Label, line: 3, col: 17, text: "somewhere" }
+                          ^ Token { kind: Minus, line: 3, col: 27, text: "-" }
+                            ^^^^ Token { kind: Label, line: 3, col: 29, text: "else" }
+                                 ^ Token { kind: CloseEffectiveAddress, line: 3, col: 34, text: "]" }
+ mai: mov eax, rax ; nonlabel: jmp main
+ ^^^ Token { kind: Label, line: 4, col: 2, text: "mai" }
+      ^^^ Token { kind: Instruction, line: 4, col: 7, text: "mov" }
+          ^^^ Token { kind: Register, line: 4, col: 11, text: "eax" }
+               ^^^ Token { kind: Register, line: 4, col: 16, text: "rax" }
+                    ^^^^^^^^^^^^^^^^^^^ Token { kind: Comment, line: 4, col: 21, text: " nonlabel: jmp main" }
+     mov eax, "hell\xabo"
+     ^^^ Token { kind: Instruction, line: 5, col: 6, text: "mov" }
+         ^^^ Token { kind: Register, line: 5, col: 10, text: "eax" }
+               ^^^^^^^^^ Token { kind: String, line: 5, col: 16, text: "hell\\xabo" }
 

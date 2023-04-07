@@ -17,103 +17,48 @@
 *
 * */
 
-use std::{cell::RefCell, collections::VecDeque, fmt};
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, take_until, take_while, take_while_m_n},
+    character::complete::{one_of, satisfy},
+    combinator::{map, not, opt},
+    error::ParseError,
+    multi::{many0, many_m_n, separated_list0},
+    sequence::{delimited, preceded, terminated, tuple},
+    IResult, Parser,
+};
+use nom_locate::{position, LocatedSpan};
+use nom_supreme::error::ErrorTree;
 
-use lexer_state::LexerState;
-mod lexer_state;
-
-#[derive(Clone, PartialEq)]
-pub struct Span {
-    pub start_row: usize,
-    pub start_col: usize,
-    pub end_row: usize,
-    pub end_col: usize,
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Base {
+    Binary,
+    Octal,
+    Decimal,
+    Hexadecimal,
 }
 
-impl Span {
-    pub fn empty() -> Self {
-        Self {
-            start_row: 0,
-            start_col: 0,
-            end_row: 0,
-            end_col: 0,
-        }
-    }
-}
-
-impl fmt::Debug for Span {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "({},{})->({},{})",
-            self.start_row, self.start_col, self.end_row, self.end_col
-        )
-    }
-}
-
-#[derive(Default, Clone, PartialEq)]
-pub enum TokenText<'a> {
-    Slice(&'a [char]),
-    Owned(String),
-    #[default]
-    Empty,
-}
-
-impl<'a> From<TokenText<'a>> for String {
-    fn from(val: TokenText<'a>) -> Self {
-        match val {
-            TokenText::Slice(s) => s.iter().collect(),
-            TokenText::Owned(s) => s,
-            TokenText::Empty => "".to_string(),
-        }
-    }
-}
-
-impl<'a> From<&TokenText<'a>> for String {
-    fn from(val: &TokenText<'a>) -> Self {
-        match val {
-            TokenText::Slice(s) => s.iter().collect(),
-            TokenText::Owned(s) => s.clone(),
-            TokenText::Empty => "".to_string(),
-        }
-    }
-}
-
-impl<'a> fmt::Debug for TokenText<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TokenText::Slice(_) | TokenText::Owned(_) => {
-                let s: String = self.into();
-
-                write!(f, "{s:?}")
-            }
-            TokenText::Empty => write!(f, "<Empty>"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ErrorKind {
-    TrailingComma,
-    Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TokenKind {
+    /// A Label
     Label,
-    /// a end of line style comment, including the ;
-    Comment,
+
+    #[default]
+    Illegal,
     /// An instruction. Depending on the actual instruction there could be zero or more arguments
     /// but this is not checked by the lexer
     Instruction,
-    /// could not handle this token.
-    Illegal(ErrorKind),
+    /// A literal number, in the given base
+    Number(Base),
+    /// a end of line style comment, excluding the `;`
+    Comment,
 
     // operands
     /// a register
     Register,
-    /// A literal number
-    Number,
+
+    OpenParen,
+    CloseParen,
 
     // Operand: Effective Address
     /// Begins the Effective Address environment. Corresponds to a [
@@ -126,87 +71,75 @@ pub enum TokenKind {
     Minus,
     /// A Times (*) operator
     Times,
-    Const,
+    /// A Split (,) operator
+    Split,
+    String,
+    TernaryIf,
+    TernaryElse,
+    BoolOr,
+    BoolXor,
+    BoolAnd,
+    Equals,
+    NotEquals,
+    LessThanEquals,
+    GreaterThanEquals,
+    GreaterThan,
+    LessThan,
+    BitOr,
+    BitXor,
+    BitAnd,
+    ShiftRight,
+    ShiftLeft,
+    DivUnsigned,
+    DivSigned,
+    ModUnsigned,
+    ModSigned,
+    Negative,
+    Positive,
+    Segment,
+    BoolNegation,
+    BitNegation,
+    SignedCmp,
+    Wrt,
 }
 
-#[derive(Clone, PartialEq)]
-pub struct Token<'a> {
-    pub kind: TokenKind,
-    pub text: TokenText<'a>,
-    pub span: Span,
+#[derive(Debug, PartialEq, Eq)]
+struct RawToken<'a> {
+    kind: TokenKind,
+    pos: Span<'a>,
+    length: usize,
 }
 
-impl fmt::Debug for Token<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Token")
-            .field(&self.kind)
-            .field(&self.text)
-            .field(&self.span)
-            .finish()
-    }
-}
-
-fn make_span(start: usize, end: usize, lines: &[usize]) -> Span {
-    assert!(
-        start <= end,
-        "start ({start}) must be less than end ({end})"
-    );
-
-    let start_row = lines
-        .iter()
-        .enumerate()
-        .find_map(|(line, &ch)| (ch > start).then_some(line))
-        .unwrap()
-        - 1;
-
-    let end_row = lines
-        .iter()
-        .enumerate()
-        .skip(start_row)
-        .find_map(|(line, &ch)| (ch > end).then_some(line))
-        .unwrap()
-        - 1;
-
-    Span {
-        start_row,
-        start_col: start - lines[start_row],
-        end_row,
-        end_col: end - lines[end_row],
-    }
-}
-
-impl<'a> Token<'a> {
-    fn new(kind: TokenKind, range: (usize, usize), chars: &'a [char], lines: &[usize]) -> Self {
-        let (start, end) = range;
+impl<'a> RawToken<'a> {
+    fn from_span(kind: TokenKind, s: Span<'a>) -> Self {
         Self {
             kind,
-            text: TokenText::Slice(&chars[start..end]),
-            span: make_span(start, end, lines),
+            pos: s,
+            length: s.len(),
         }
     }
 }
 
-
-pub struct Lexer<'a> {
-    chars: Vec<char>,
-    state: RefCell<LexerState>,
-    lines: Vec<usize>,
-    buffered: RefCell<VecDeque<Token<'a>>>,
+#[derive(Debug, PartialEq, Eq)]
+pub struct Token<'a> {
+    pub kind: TokenKind,
+    pub line: u32,
+    pub col: usize,
+    pub text: &'a str,
 }
 
-impl fmt::Debug for Lexer<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Lexer")
-            .field("position", &self.position())
-            .field("read_position", &self.state.borrow().read_position)
-            .field("ch", &self.ch())
-            .finish()
+impl<'a> Token<'a> {
+    fn from_raw(raw: RawToken, input: &'a str) -> Self {
+        Token {
+            kind: raw.kind,
+            line: raw.pos.location_line(),
+            col: raw.pos.get_utf8_column(),
+            text: &input[raw.pos.location_offset()..raw.pos.location_offset() + raw.length],
+        }
     }
 }
 
-fn is_whitespace(ch: char) -> bool {
-    ch != '\n' && ch.is_ascii_whitespace()
-}
+pub type Span<'a> = LocatedSpan<&'a str>;
 
 fn is_word_start(ch: char) -> bool {
     ch.is_ascii_alphabetic()
@@ -223,295 +156,547 @@ fn is_label(ch: char) -> bool {
     is_label_start(ch) || ch.is_ascii_digit()
 }
 
-impl<'a> Lexer<'a> {
-    fn ch(&self) -> Option<&char> {
-        self.chars.get(self.position())
-    }
+fn is_space(ch: char) -> bool {
+    ch.is_ascii() && nom::character::is_space(ch as u8)
+}
 
-    pub fn new(input: &str) -> Self {
-        let chars = input.chars().collect();
+fn take_whitespace<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, (), E> {
+    // TODO: handle '\<newline', which is whitespace
+    let (s, _) = take_while(is_space)(s)?;
+    Ok((s, ()))
+}
 
-        let lines = std::iter::once(0)
-            .chain(
-                input
-                    .chars()
-                    .enumerate()
-                    .filter_map(|(idx, ch)| (ch == '\n').then_some(idx + 1)),
-            )
-            .collect();
-
-        Self {
-            chars,
-            state: RefCell::new(LexerState {
-                position: 0,
-                read_position: 1,
-            }),
-            lines,
-            buffered: Default::default(),
-        }
-    }
-
-    fn rest_of_input(&self) -> TokenText {
-        TokenText::Slice(&self.chars[self.state.borrow().position..])
-    }
-
-    fn position(&self) -> usize {
-        self.state.borrow().position
-    }
-
-    fn read_label(&self) -> Option<Token> {
-        let mut state = self.state.borrow().to_owned();
-        state.read_while(&self.chars, is_whitespace);
-
-        let (start, end) = state.wordy(&self.chars, is_label_start, is_label)?;
-
-        let span = make_span(start, end, &self.lines);
-        let text = TokenText::Slice(&self.chars[start..end]);
-
-        state.read_while(&self.chars, is_whitespace);
-
-        if state.ch(&self.chars)? == ':' {
-            state.read_char(&self.chars);
-
-            *self.state.borrow_mut() = state;
-            Some(Token {
-                kind: TokenKind::Label,
-                text,
-                span,
-            })
-        } else {
-            None
-        }
-    }
-
-    fn read_instruction(&self) -> Option<Token> {
-        let mut state = self.state.borrow().to_owned();
-
-        state.read_while(&self.chars, is_whitespace);
-        let (start, end) = state.wordy(&self.chars, is_word_start, is_word)?;
-
-        let span = make_span(start, end, &self.lines);
-        let text = TokenText::Slice(&self.chars[start..end]);
-
-        *self.state.borrow_mut() = state;
-        Some(Token {
-            kind: TokenKind::Instruction,
-            text,
-            span,
-        })
-    }
-
-    fn read_register(&self) -> Option<Token> {
-        let mut state = self.state.borrow().clone();
-
-        let (start, end) = state.wordy(&self.chars, is_word_start, is_word)?;
-
-        match state.ch(&self.chars) {
-            None => {}
-            Some(w) if w.is_ascii_whitespace() => {}
-            Some(',') => {}
-            _ => return None,
-        }
-
-        let span = make_span(start, end, &self.lines);
-        let text = TokenText::Slice(&self.chars[start..end]);
-        *self.state.borrow_mut() = state;
-
-        Some(Token {
-            kind: TokenKind::Register,
-            text,
-            span,
-        })
-    }
-
-    fn read_number<'b>(
-        state: &mut LexerState,
-        chars: &'b [char],
-        lines: &[usize],
-    ) -> Option<Token<'b>> {
-        // simple decimal
-        state
-            .cant_end_with(chars, |ch| ch.is_ascii_digit(), is_word)
-            .map(|range| Token::new(TokenKind::Const, range, chars, lines))
-    }
-
-    fn read_effective_address(&'a self) -> Option<()> {
-        let mut state = self.state.borrow().clone();
-        let mut buf = vec![];
-        state.read_while(&self.chars, is_whitespace);
-        let start = state.position;
-        let Some('[') = state.read_char(&self.chars) else {
-            return None;
-        };
-        let end = state.position;
-        buf.push(Token::new(
-            TokenKind::OpenEffectiveAddress,
-            (start, end),
-            &self.chars,
-            &self.lines,
-        ));
-
-        let tokens = state.delimited(
-            &self.chars,
-            |state, chars| {
-                state.either(
-                    chars,
-                    |state, chars| {
-                        state
-                            .wordy(chars, is_label_start, is_label)
-                            .map(|range| Token::new(TokenKind::Label, range, chars, &self.lines))
-                    },
-                    |state, chars| Lexer::read_number(state, chars, &self.lines),
-                )
+fn parse_wordy<'a, F1, F2, E: ParseError<Span<'a>>>(
+    start: F1,
+    rest: F2,
+    kind: TokenKind,
+) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E>
+where
+    F1: Fn(char) -> bool,
+    F2: Fn(char) -> bool,
+{
+    move |s| {
+        let (s, _) = take_whitespace(s)?;
+        let (s, pos) = position(s)?;
+        let (s, prefix) = satisfy(&start)(s)?;
+        let (s, word) = take_while(&rest)(s)?;
+        let (s, _) = take_whitespace(s)?;
+        Ok((
+            s,
+            RawToken {
+                kind,
+                pos,
+                length: prefix.len_utf8() + word.len(),
             },
-            |state, chars| {
-                state.either3(
-                    chars,
-                    |state, chars| {
-                        state
-                            .chr(chars, '+')
-                            .map(|range| Token::new(TokenKind::Plus, range, chars, &self.lines))
-                    },
-                    |state: &mut LexerState, chars| {
-                        state
-                            .chr(chars, '-')
-                            .map(|range| Token::new(TokenKind::Minus, range, chars, &self.lines))
-                    },
-                    |state: &mut LexerState, chars| {
-                        state
-                            .chr(chars, '*')
-                            .map(|range| Token::new(TokenKind::Times, range, chars, &self.lines))
-                    },
-                )
-            },
-            is_whitespace,
-        );
+        ))
+    }
+}
 
-        buf.extend(tokens.into_iter());
+fn parse_label<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
+    terminated(
+        parse_wordy(is_label_start, is_label, TokenKind::Label),
+        tag(":"),
+    )(s)
+}
 
-        // we can
-        // - have words (alphanum | ':' | '.' | '$' | '_')
-        // - have consts
-        // - do arithmetic (*,-,+)
+fn parse_instruction<'a, E: ParseError<Span<'a>>>(
+    s: Span<'a>,
+) -> IResult<Span<'a>, RawToken<'a>, E> {
+    parse_wordy(is_word_start, is_word, TokenKind::Instruction)(s)
+}
 
-        let start = state.position;
-        let Some(']') = state.read_char(&self.chars) else {
-            return None;
+fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    // boolean ? trueval : falseval
+    let conditional_operator = |s| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+        let mut out = vec![];
+        let (s, boolean) = parse_expr(s)?;
+        let (s, ternary_if) = tag("?")(s)?;
+        let (s, trueval) = parse_expr(s)?;
+        let (s, ternary_else) = tag(":")(s)?;
+        let (s, falseval) = parse_expr(s)?;
+
+        out.extend(boolean.into_iter());
+        out.push(RawToken::from_span(TokenKind::TernaryIf, ternary_if));
+        out.extend(trueval.into_iter());
+        out.push(RawToken::from_span(TokenKind::TernaryElse, ternary_else));
+        out.extend(falseval.into_iter());
+
+        Ok((s, out))
+    };
+
+    let binop = move |operator: &'static str, kind| {
+        move |s| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+            let mut out = vec![];
+            let (s, a) = parse_expr(s)?;
+            let (s, bool_or) = tag(operator)(s)?;
+            let (s, b) = parse_expr(s)?;
+
+            out.extend(a.into_iter());
+            out.push(RawToken::from_span(kind, bool_or));
+            out.extend(b.into_iter());
+
+            Ok((s, out))
+        }
+    };
+
+    let unop = move |operator: &'static str, kind| {
+        move |s| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+            let mut out = vec![];
+            let (s, bool_or) = tag(operator)(s)?;
+            let (s, a) = parse_expr(s)?;
+
+            out.push(RawToken::from_span(kind, bool_or));
+            out.extend(a.into_iter());
+
+            Ok((s, out))
+        }
+    };
+
+    let boolean_or = binop("||", TokenKind::BoolOr);
+    let boolean_xor = binop("^^", TokenKind::BoolXor);
+    let boolean_and = binop("&&", TokenKind::BoolAnd);
+    let eq = binop("=", TokenKind::Equals);
+    let eq2 = binop("==", TokenKind::Equals);
+    let neq = binop("!=", TokenKind::NotEquals);
+    let neq2 = binop("<>", TokenKind::NotEquals);
+    let lt = binop("<", TokenKind::LessThan);
+    let lteq = binop("<=", TokenKind::LessThanEquals);
+    let gt = binop(">", TokenKind::GreaterThan);
+    let gteq = binop(">=", TokenKind::GreaterThanEquals);
+    let signed_cmp = binop("<=>", TokenKind::SignedCmp);
+
+    let bit_or = binop("|", TokenKind::BitOr);
+    let bit_xor = binop("^", TokenKind::BitXor);
+    let bit_and = binop("&", TokenKind::BitAnd);
+
+    let shift_left = binop("<<", TokenKind::ShiftLeft);
+    let shift_right = binop(">>", TokenKind::ShiftRight);
+
+    let add = binop("+", TokenKind::Plus);
+    let sub = binop("-", TokenKind::Minus);
+
+    let wrt = binop("WRT", TokenKind::Wrt);
+
+    let mul = binop("*", TokenKind::Times);
+    let div_signed = binop("//", TokenKind::DivSigned);
+    let div_unsigned = binop("/", TokenKind::DivUnsigned);
+    let mod_signed = binop("%%", TokenKind::ModSigned);
+    let mod_unsigned = binop("%", TokenKind::ModUnsigned);
+
+    let negation = unop("-", TokenKind::Negative);
+    let positive = unop("+", TokenKind::Positive);
+    let bitneg = unop("~", TokenKind::BitNegation);
+    let boolneg = unop("!", TokenKind::BoolNegation);
+
+    let segment = unop("SEG", TokenKind::Segment);
+
+    // TODO: implement https://www.nasm.us/doc/nasmdoc6.html#section-6.4
+
+    let mut out = vec![];
+    let (s, _) = take_whitespace(s)?;
+    let (s, open_paren) = opt(tag("("))(s)?;
+    let (s, _) = take_whitespace(s)?;
+    if let Some(paren) = open_paren {
+        out.push(RawToken::from_span(TokenKind::OpenParen, paren));
+    }
+
+    let unops = alt((
+        mul,
+        div_signed,
+        div_unsigned,
+        mod_signed,
+        mod_unsigned,
+        negation,
+        positive,
+        bitneg,
+        boolneg,
+        segment,
+    ));
+
+    let binops = alt((
+        boolean_or,
+        boolean_xor,
+        boolean_and,
+        eq,
+        eq2,
+        neq,
+        neq2,
+        lt,
+        lteq,
+        gt,
+        gteq,
+        signed_cmp,
+        bit_or,
+        bit_xor,
+        bit_and,
+        shift_left,
+        shift_right,
+        add,
+        sub,
+        wrt,
+    ));
+
+    let (s, expr) = alt((unops, binops, conditional_operator))(s)?;
+    out.extend(expr.into_iter());
+
+    let (s, _) = take_whitespace(s)?;
+    let s = if open_paren.is_some() {
+        let (s, close_paren) = tag(")")(s)?;
+        out.push(RawToken::from_span(TokenKind::OpenParen, close_paren));
+        s
+    } else {
+        s
+    };
+    let (s, _) = take_whitespace(s)?;
+
+    Ok((s, out))
+}
+
+fn parse_str<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
+    // A character string consists of up to eight characters enclosed in either single
+    // quotes ('...'), double quotes ("...") or backquotes (`...`). Single or double
+    // quotes are equivalent to NASM (except of course that surrounding the constant
+    // with single quotes allows double quotes to appear within it and vice versa);
+    // the contents of those are represented verbatim. Strings enclosed in backquotes
+    // support C-style \–escapes for special characters.
+    // \'          single quote (')
+    // \"          double quote (")
+    // \`          backquote (`)
+    // \\          backslash (\)
+    // \?          question mark (?)
+    // \a          BEL (ASCII 7)
+    // \b          BS  (ASCII 8)
+    // \t          TAB (ASCII 9)
+    // \n          LF  (ASCII 10)
+    // \v          VT  (ASCII 11)
+    // \f          FF  (ASCII 12)
+    // \r          CR  (ASCII 13)
+    // \e          ESC (ASCII 27)
+    // \377        Up to 3 octal digits - literal byte
+    // \xFF        Up to 2 hexadecimal digits - literal byte
+    // \u1234      4 hexadecimal digits - Unicode character
+    // \U12345678  8 hexadecimal digits - Unicode character
+
+    let chr = move |quot: char| {
+        alt((
+            map(satisfy(move |ch: char| ch != '\\' && ch != quot), |_| ()),
+            map(preceded(tag("\\"), one_of(r#"\\'"`?abtnvfre"#)), |_| ()),
+            map(
+                preceded(
+                    tag("\\x"),
+                    take_while_m_n(1, 2, |ch: char| ch.is_ascii_hexdigit()),
+                ),
+                |_| (),
+            ),
+            map(
+                preceded(
+                    tag("\\u"),
+                    take_while_m_n(1, 4, |ch: char| ch.is_ascii_hexdigit()),
+                ),
+                |_| (),
+            ),
+            map(
+                preceded(
+                    tag("\\U"),
+                    take_while_m_n(1, 8, |ch: char| ch.is_ascii_hexdigit()),
+                ),
+                |_| (),
+            ),
+            map(
+                preceded(
+                    tag("\\o"),
+                    take_while_m_n(1, 2, |ch: char| ('0'..='7').contains(&ch)),
+                ),
+                |_| (),
+            ),
+        ))
+    };
+
+    let (s, _) = take_whitespace(s)?;
+    let (s, (start, _, end)) = alt((
+        delimited(
+            tag("\""),
+            tuple((position, many_m_n(0, 8, chr('"')), position)),
+            tag("\""),
+        ),
+        delimited(
+            tag("'"),
+            tuple((position, many_m_n(0, 8, chr('\'')), position)),
+            tag("'"),
+        ),
+        delimited(
+            tag("`"),
+            tuple((position, many_m_n(0, 8, chr('`')), position)),
+            tag("`"),
+        ),
+    ))(s)?;
+    let (s, _) = take_whitespace(s)?;
+    Ok((
+        s,
+        RawToken {
+            kind: TokenKind::String,
+            pos: start,
+            length: end.location_offset() - start.location_offset(),
+        },
+    ))
+}
+
+fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
+    // A numeric constant is simply a number. NASM allows you to specify numbers
+    // in a variety of number bases, in a variety of ways: you can suffix H or X, D or
+    // T, Q or O, and B or Y for hexadecimal, decimal, octal and binary respectively,
+    //
+    // or you can prefix 0x, for hexadecimal in the style of C, or you can prefix $
+    // for hexadecimal in the style of Borland Pascal or Motorola Assemblers. Note,
+    // though, that the $ prefix does double duty as a prefix on identifiers (see
+    // section 3.1), so a hex number prefixed with a $ sign must have a digit after
+    // the $ rather than a letter.
+    // In addition, current versions of NASM accept the
+    // prefix 0h for hexadecimal, 0d or 0t for decimal, 0o or 0q for octal, and 0b or
+    // 0y for binary. Please note that unlike C, a 0 prefix by itself does not imply
+    // an octal constant!
+
+    fn map_number(base: Base) -> impl FnMut(Span) -> RawToken {
+        move |span| RawToken {
+            kind: TokenKind::Number(base),
+            pos: span,
+            length: span.len(),
+        }
+    }
+
+    let hex_postfix = map(
+        terminated(
+            terminated(
+                take_while(|ch: char| ch.is_ascii_hexdigit()),
+                one_of("HXhx"),
+            ),
+            not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
+        ),
+        map_number(Base::Hexadecimal),
+    );
+
+    let hex_prefix = map(
+        preceded(
+            alt((tag("0x"), tag("0h"), tag("$"))),
+            take_while(|ch: char| ch.is_ascii_hexdigit()),
+        ),
+        map_number(Base::Hexadecimal),
+    );
+
+    let bin_postfix = map(
+        terminated(
+            terminated(
+                take_while(|ch: char| ch == '0' || ch == '1'),
+                one_of("BYby"),
+            ),
+            not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
+        ),
+        map_number(Base::Binary),
+    );
+
+    let bin_prefix = map(
+        preceded(tag("0b"), take_while(|ch: char| ch.is_ascii_hexdigit())),
+        map_number(Base::Binary),
+    );
+
+    let oct_postfix = map(
+        terminated(
+            terminated(
+                take_while(|ch: char| ('0'..='7').contains(&ch)),
+                one_of("OQoq"),
+            ),
+            not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
+        ),
+        map_number(Base::Octal),
+    );
+
+    let oct_prefix = map(
+        preceded(
+            alt((tag("0o"), tag("0q"))),
+            take_while(|ch: char| ch.is_ascii_hexdigit()),
+        ),
+        map_number(Base::Octal),
+    );
+
+    let dec_postfix = map(
+        terminated(
+            terminated(take_while(|ch: char| ch.is_ascii_digit()), one_of("TDtd")),
+            not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
+        ),
+        map_number(Base::Decimal),
+    );
+
+    let dec_prefix = map(
+        preceded(tag("0d"), take_while(|ch: char| ch.is_ascii_digit())),
+        map_number(Base::Decimal),
+    );
+
+    let dec_normal = map(
+        take_while(|ch: char| ch.is_ascii_digit()),
+        map_number(Base::Decimal),
+    );
+
+    let (s, _) = take_whitespace(s)?;
+    let (s, out) = terminated(
+        alt((
+            hex_postfix,
+            hex_prefix,
+            bin_postfix,
+            bin_prefix,
+            oct_postfix,
+            oct_prefix,
+            dec_postfix,
+            dec_prefix,
+            dec_normal,
+        )),
+        not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
+    )(s)?;
+    let (s, _) = take_whitespace(s)?;
+    Ok((s, out))
+}
+
+fn parse_operands<'a, E: ParseError<Span<'a>>>(
+    s: Span<'a>,
+) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    let tg = move |v, kind| {
+        map(tag(v), move |s| RawToken {
+            kind,
+            pos: s,
+            length: s.len(),
+        })
+    };
+
+    let parse_effective_addr = |s| {
+        let mut out = vec![];
+        let (s, _) = take_whitespace(s)?;
+        let (s, o) = tag("[")(s)?;
+        // TODO: nosplit
+        // TODO: rel
+        out.push(RawToken::from_span(TokenKind::OpenEffectiveAddress, o));
+        let (s, first) = parse_wordy(is_word_start, is_word, TokenKind::Label)(s)?;
+        out.push(first);
+
+        let (s, rest) = many0(tuple((
+            alt((
+                tg("+", TokenKind::Plus),
+                tg("*", TokenKind::Times),
+                tg("-", TokenKind::Minus),
+                tg(",", TokenKind::Split),
+            )),
+            alt((
+                // parse number first because $<hex> is a number while $<label> is a label
+                parse_number,
+                parse_wordy(is_word_start, is_word, TokenKind::Label),
+            )),
+        )))(s)?;
+        for (operator, op) in rest {
+            out.push(operator);
+            out.push(op);
+        }
+        let (s, o) = tag("]")(s)?;
+        out.push(RawToken::from_span(TokenKind::CloseEffectiveAddress, o));
+        Ok((s, out))
+    };
+
+    let (s, x) = separated_list0::<_, _, _, E, _, _>(
+        tag(","),
+        alt((
+            parse_wordy(is_word_start, is_word, TokenKind::Register).map(|x| vec![x]),
+            parse_effective_addr,
+            parse_str.map(|x| vec![x]),
+        )),
+    )(s)?;
+
+    Ok((s, x.into_iter().flatten().collect()))
+}
+
+fn parse_op<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    let mut output = vec![];
+    let (s, instr) = parse_instruction(s)?;
+    output.push(instr);
+
+    let (s, operands) = parse_operands(s)?;
+    output.extend(operands.into_iter());
+
+    Ok((s, output))
+}
+
+fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
+    let (s, _) = take_whitespace(s)?;
+
+    let (s, comment) = preceded(tag(";"), take_until("\n"))(s)?;
+    Ok((
+        s,
+        RawToken {
+            kind: TokenKind::Comment,
+            pos: comment,
+            length: comment.len(),
+        },
+    ))
+}
+
+fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    macro_rules! unwrap_or_return_illegal {
+        ($e:expr, $output:expr, $s:expr) => {
+            match $e {
+                Ok(x) => x,
+                Err(_) => {
+                    let (rest, invalid) = terminated(take_until::<_, _, E>("\n"), tag("\n"))($s)
+                        .unwrap_or((Span::new(""), $s));
+
+                    $output.push(RawToken {
+                        kind: TokenKind::Illegal,
+                        pos: invalid,
+                        length: invalid.len(),
+                    });
+
+                    return Ok((rest, $output));
+                }
+            }
         };
-        let end = state.position;
-        buf.push(Token::new(
-            TokenKind::CloseEffectiveAddress,
-            (start, end),
-            &self.chars,
-            &self.lines,
-        ));
-
-        // commit
-        *self.state.borrow_mut() = state;
-        let mut buffer = self.buffered.borrow_mut();
-        for v in buf {
-            buffer.push_back(v);
-        }
-        Some(())
     }
 
-    /// reads a single operand. If the operand consists of multiple tokens, consumes every token.
-    /// pushes all the operands to the buffer
-    fn read_operand(&'a self) -> Option<()> {
-        // Instruction operands may take a number of forms: they can be registers,
-        // described simply by the register name (e.g. ax, bp, ebx, cr0: NASM does not use
-        // the gas–style syntax in which register names must be prefixed by a % sign), or
-        // they can be effective addresses (see section 3.3), constants (section 3.4) or
-        // expressions (section 3.5).
-
-        if let Some(register) = self.read_register() {
-            self.buffered.borrow_mut().push_back(register);
-            return Some(());
-        }
-        if self.read_effective_address().is_some() {
-            return Some(());
-        }
-
-        None
+    let mut output = vec![];
+    let (s, label) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_label)(s), output, s);
+    if let Some(label) = label {
+        output.push(label);
     }
 
-    fn read_operands(&'a self) {
-        self.state
-            .borrow_mut()
-            .read_while(&self.chars, is_whitespace);
-        if self.read_operand().is_none() {
-            return;
-        }
-
-        while let Some(',') = {
-            // scope because state must be dropped. otherwise panics.
-            let state = self.state.borrow();
-            state.ch(&self.chars)
-        } {
-            self.state.borrow_mut().read_char(&self.chars);
-            self.state
-                .borrow_mut()
-                .read_while(&self.chars, is_whitespace);
-            if self.read_operand().is_none() {
-                let (start, end) = self
-                    .state
-                    .borrow_mut()
-                    .read_until(&self.chars, |ch| ch == '\n');
-
-                self.buffered.borrow_mut().push_back(Token {
-                    kind: TokenKind::Illegal(ErrorKind::TrailingComma),
-                    text: TokenText::Slice(&self.chars[start..end]),
-                    span: make_span(start, end, &self.lines),
-                });
-            }
-        }
+    let (s, ops) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_op)(s), output, s);
+    if let Some(ops) = ops {
+        output.extend(ops);
     }
 
-    /// this does not yet handle macros or the like
-    fn read_line(&'a self) {
-        if let Some(label) = self.read_label() {
-            self.buffered.borrow_mut().push_back(label);
-        }
-
-        if let Some(instr) = self.read_instruction() {
-            self.buffered.borrow_mut().push_back(instr);
-        }
-        self.read_operands();
-        // self.read_comment();
-
-        eprintln!("read_line {:?}", self.rest_of_input());
-        let ch = self.state.borrow_mut().read_char(&self.chars);
-        dbg!(ch);
-        match ch {
-            None | Some('\n') => {}
-            _ => {
-                let (start, end) = self
-                    .state
-                    .borrow_mut()
-                    .read_until(&self.chars, |ch| ch == '\n');
-
-                self.buffered.borrow_mut().push_back(Token {
-                    kind: TokenKind::Illegal(ErrorKind::Unknown),
-                    text: TokenText::Slice(&self.chars[start..end]),
-                    span: make_span(start, end, &self.lines),
-                });
-            }
-        }
+    let (s, comment) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_comment)(s), output, s);
+    if let Some(comment) = comment {
+        output.push(comment);
     }
 
-    fn first_buffered(&self) -> Option<Token> {
-        self.buffered.borrow_mut().pop_front()
+    let (s, _) = unwrap_or_return_illegal!(tag::<_, _, E>("\n")(s), output, s);
+
+    Ok((s, output))
+}
+
+fn parse_all<'a, E: ParseError<Span<'a>>>(
+    mut input: Span<'a>,
+) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    let mut output = vec![];
+    while !input.is_empty() {
+        let (rest, line) = parse_line(input)?;
+        input = rest;
+        output.extend(line.into_iter());
     }
 
-    /// Produces the next token in the program
-    /// in case of failure, consumes the rest of the offending line and continues
-    pub fn next_token(&'a self) -> Option<Token> {
-        if let Some(first) = self.first_buffered() {
-            return Some(first);
-        }
-        self.read_line();
-        self.first_buffered()
-    }
+    Ok((input, output))
+}
+
+// NOTE: this very much is *not* infallible
+pub fn parse(input: &str) -> Result<impl Iterator<Item = Token>, std::convert::Infallible> {
+    let span = Span::new(input);
+    let (s, all) = parse_all::<ErrorTree<Span>>(span).expect("handle error");
+    assert_eq!(s.fragment(), &"", "todo: handle incomplete match");
+
+    Ok(all.into_iter().map(|x| Token::from_raw(x, input)))
 }
 
 #[cfg(test)]
@@ -520,37 +705,22 @@ mod tests {
 
     use super::*;
     fn snapshot_lexing(input: &str) -> String {
-        let lexer = Lexer::new(input);
-
-        let mut tokens = VecDeque::new();
-        while let Some(tok) = lexer.next_token() {
-            // if matches!(tok.kind, TokenKind::Illegal(_)) {
-            //     //     panic!("failure: {input:#?}");
-            //     tokens.push_back(tok);
-            //     break;
-            // }
-
-            tokens.push_back(tok);
-        }
+        let mut tokens = parse(input).unwrap().collect::<VecDeque<_>>();
 
         let mut output = String::new();
-        eprintln!("{tokens:?}");
+        // eprintln!("{tokens:?}");
         for (row, line) in input.lines().enumerate() {
             output += line;
             output += "\n";
 
             while let Some(tok) = tokens.pop_front() {
-                if tok.span.start_row != tok.span.end_row {
-                    panic!("We haven't handled this yet");
-                }
-
-                if tok.span.start_row != row {
+                if tok.line as usize != row + 1 {
                     tokens.push_front(tok);
                     break;
                 }
 
-                output += &" ".repeat(tok.span.start_col);
-                output += &"^".repeat(tok.span.end_col - tok.span.start_col);
+                output += &" ".repeat(tok.col - 1);
+                output += &"^".repeat(tok.text.len());
                 output += &format!(" {tok:?}");
                 output += "\n"
             }
@@ -577,4 +747,38 @@ mod tests {
     snap!(hello, "../testdata/hello.asm");
     snap!(printf1, "../testdata/printf1.asm");
     snap!(hm, "../testdata/hm.asm");
+
+    mod components {
+        use super::*;
+        mod label {
+            use super::*;
+
+            fn label(line: u32, col: usize, text: &str) -> Token {
+                Token {
+                    kind: crate::TokenKind::Label,
+                    line,
+                    col,
+                    text,
+                }
+            }
+            fn prs(s: &str) -> IResult<Span, RawToken, ErrorTree<Span>> {
+                let s = Span::new(s);
+                parse_label::<ErrorTree<Span>>(s)
+            }
+
+            #[test]
+            fn works() {
+                let inputs = "some_label: mov eax, ebx";
+                let parsed = prs(inputs).expect("managed to parse");
+                assert_eq!(parsed.0.fragment(), &" mov eax, ebx");
+                assert_eq!(Token::from_raw(parsed.1, inputs), label(1, 1, "some_label"));
+            }
+
+            #[test]
+            fn not_like_this() {
+                let inputs = "some label: mov eax, ebx";
+                prs(inputs).expect_err("failed to parse");
+            }
+        }
+    }
 }
