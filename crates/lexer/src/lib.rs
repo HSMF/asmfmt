@@ -2,16 +2,13 @@
 * # A lexer for NASM-Style Assembly.
 *
 * ```
-* #use asm_lexer::{Lexer, TokenKind};
-* #let input = "mov eax, ecx";
-* let lexer = Lexer::new(input);
-* while let Ok(Some(token)) = lexer.next_token() {
-*     if matches!(token.kind, TokenKind::Illegal(_)) {
-*       // the input was illegal, handle this case accordingly.
-*       // the lexer will continue producing tokens
-*       // in case failure is not the end
-*       return;
-*     }
+* # use asm_lexer::{parse};
+* let input = "mov eax, ecx";
+*
+* for token in parse(input).unwrap() {
+*   // do stuff
+*   // in case of failure, the token will contain 
+*   // the rest of the line and continue normally
 * }
 * ```
 *
@@ -19,11 +16,13 @@
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_until1, take_while, take_while_m_n},
+    bytes::complete::{
+        tag, tag_no_case, take_until, take_until1, take_while, take_while1, take_while_m_n,
+    },
     character::complete::{one_of, satisfy},
     combinator::{fail, map, not, opt},
     error::ParseError,
-    multi::{many_m_n, separated_list0},
+    multi::{many0, separated_list0, separated_list1},
     sequence::{delimited, preceded, terminated, tuple},
     IResult, Parser,
 };
@@ -31,6 +30,7 @@ use nom_locate::{position, LocatedSpan};
 use nom_supreme::error::ErrorTree;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// The base of a number.
 pub enum Base {
     Binary,
     Octal,
@@ -60,6 +60,7 @@ pub enum TokenKind {
     OpenParen,
     CloseParen,
 
+    Ident,
     // Operand: Effective Address
     /// Begins the Effective Address environment. Corresponds to a [
     OpenEffectiveAddress,
@@ -101,7 +102,24 @@ pub enum TokenKind {
     BitNegation,
     SignedCmp,
     Wrt,
-    Ident,
+    /// A size modifier, such as DWORD
+    Size,
+    BitsDirective,
+    Default,
+    DefaultsValue,
+    Section,
+    SectionName,
+    GlobalValue,
+    Global,
+    ExternValue,
+    Extern,
+
+    /// DB, DW, DD, DQ, DT, DO, DY and DZ.
+    /// DT, DO, DY and DZ are currently unsupported
+    DeclareMemoryInit,
+
+    /// `equ`
+    Equ,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -452,20 +470,21 @@ fn parse_str<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawT
     };
 
     let (s, _) = take_whitespace(s)?;
+    // TODO: when to only take 8 bytes
     let (s, (start, _, end)) = alt((
         delimited(
             tag("\""),
-            tuple((position, many_m_n(0, 8, chr('"')), position)),
+            tuple((position, many0(chr('"')), position)),
             tag("\""),
         ),
         delimited(
             tag("'"),
-            tuple((position, many_m_n(0, 8, chr('\'')), position)),
+            tuple((position, many0(chr('\'')), position)),
             tag("'"),
         ),
         delimited(
             tag("`"),
-            tuple((position, many_m_n(0, 8, chr('`')), position)),
+            tuple((position, many0(chr('`')), position)),
             tag("`"),
         ),
     ))(s)?;
@@ -505,10 +524,7 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
 
     let hex_postfix = map(
         terminated(
-            terminated(
-                take_while(|ch: char| ch.is_ascii_hexdigit()),
-                one_of("HXhx"),
-            ),
+            terminated(take_while1(|ch: char| ch.is_ascii_hexdigit()), one_of("HX")),
             not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
         ),
         map_number(Base::Hexadecimal),
@@ -517,7 +533,7 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
     let hex_prefix = map(
         preceded(
             alt((tag("0x"), tag("0h"), tag("$"))),
-            take_while(|ch: char| ch.is_ascii_hexdigit()),
+            take_while1(|ch: char| ch.is_ascii_hexdigit()),
         ),
         map_number(Base::Hexadecimal),
     );
@@ -525,7 +541,7 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
     let bin_postfix = map(
         terminated(
             terminated(
-                take_while(|ch: char| ch == '0' || ch == '1'),
+                take_while1(|ch: char| ch == '0' || ch == '1'),
                 one_of("BYby"),
             ),
             not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
@@ -534,14 +550,14 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
     );
 
     let bin_prefix = map(
-        preceded(tag("0b"), take_while(|ch: char| ch.is_ascii_hexdigit())),
+        preceded(tag("0b"), take_while1(|ch: char| ch.is_ascii_hexdigit())),
         map_number(Base::Binary),
     );
 
     let oct_postfix = map(
         terminated(
             terminated(
-                take_while(|ch: char| ('0'..='7').contains(&ch)),
+                take_while1(|ch: char| ('0'..='7').contains(&ch)),
                 one_of("OQoq"),
             ),
             not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
@@ -552,14 +568,14 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
     let oct_prefix = map(
         preceded(
             alt((tag("0o"), tag("0q"))),
-            take_while(|ch: char| ch.is_ascii_hexdigit()),
+            take_while1(|ch: char| ch.is_ascii_hexdigit()),
         ),
         map_number(Base::Octal),
     );
 
     let dec_postfix = map(
         terminated(
-            terminated(take_while(|ch: char| ch.is_ascii_digit()), one_of("TDtd")),
+            terminated(take_while1(|ch: char| ch.is_ascii_digit()), one_of("TDtd")),
             not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
         ),
         map_number(Base::Decimal),
@@ -571,7 +587,7 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
     );
 
     let dec_normal = map(
-        take_while(|ch: char| ch.is_ascii_digit()),
+        take_while1(|ch: char| ch.is_ascii_digit()),
         map_number(Base::Decimal),
     );
 
@@ -600,6 +616,25 @@ fn parse_operands<'a, E: ParseError<Span<'a>>>(
     let parse_effective_addr = |s| {
         let mut out = vec![];
         let (s, _) = take_whitespace(s)?;
+
+        let (s, size) = opt(terminated(
+            alt((
+                tag_no_case("BYTE"),
+                tag_no_case("WORD"),
+                tag_no_case("DWORD"),
+                tag_no_case("QWORD"),
+                tag_no_case("TWORD"),
+                tag_no_case("OWORD"),
+                tag_no_case("YWORD"),
+                tag_no_case("ZWORD"),
+            )),
+            take_whitespace,
+        )
+        .map(|s| RawToken::from_span(TokenKind::Size, s)))(s)?;
+        if let Some(size) = size {
+            out.push(size);
+        }
+
         let (s, o) = tag("[")(s)?;
         // TODO: nosplit
         // TODO: rel
@@ -617,11 +652,44 @@ fn parse_operands<'a, E: ParseError<Span<'a>>>(
         Ok((s, out))
     };
 
+    fn size<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
+        alt((
+            tag_no_case("BYTE"),
+            tag_no_case("WORD"),
+            tag_no_case("DWORD"),
+            tag_no_case("QWORD"),
+            tag_no_case("TWORD"),
+            tag_no_case("OWORD"),
+            tag_no_case("YWORD"),
+            tag_no_case("ZWORD"),
+        ))(s)
+    }
     let (s, x) = separated_list0::<_, _, _, E, _, _>(
         tag(","),
         alt((
-            parse_wordy(is_word_start, is_word, TokenKind::Register).map(|x| vec![x]),
             parse_effective_addr,
+            parse_number.map(|x| vec![x]),
+            tuple((
+                not(size),
+                parse_wordy(is_word_start, is_word, TokenKind::Register),
+            ))
+            .map(|(_, x)| vec![x]),
+            tuple((
+                opt(terminated(
+                    size,
+                    tuple((satisfy(is_space), take_whitespace)),
+                )),
+                parse_wordy(is_ident_start, is_ident, TokenKind::Ident),
+            ))
+            .map(|(a, b)| {
+                let mut out = vec![];
+                if let Some(a) = a {
+                    out.push(RawToken::from_span(TokenKind::Size, a))
+                }
+                out.push(b);
+
+                out
+            }),
             parse_str.map(|x| vec![x]),
         )),
     )(s)?;
@@ -640,6 +708,41 @@ fn parse_op<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<R
     Ok((s, output))
 }
 
+fn parse_equ<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    let (s, _) = take_whitespace(s)?;
+
+    let (s, equ) = tag_no_case("equ")(s)?;
+    let (s, _) = take_whitespace(s)?;
+    let (s, val) = parse_expr(s)?;
+    let mut out = vec![RawToken::from_span(TokenKind::Equ, equ)];
+    out.extend(val.into_iter());
+    Ok((s, out))
+}
+
+fn parse_decl<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    let (s, _) = take_whitespace(s)?;
+
+    let (s, declarer) = alt((
+        tag_no_case("db"),
+        tag_no_case("dw"),
+        tag_no_case("dd"),
+        tag_no_case("dq"),
+        // the following are floating point
+        // this is not yet supported
+        // tag_no_case("DT"),
+        // tag_no_case("DO"),
+        // tag_no_case("DY"),
+        // tag_no_case("DZ"),
+    ))(s)?;
+
+    let (s, value) = separated_list1(tag(","), alt((parse_number, parse_str)))(s)?;
+
+    let mut out = vec![RawToken::from_span(TokenKind::DeclareMemoryInit, declarer)];
+    out.extend(value.into_iter());
+
+    Ok((s, out))
+}
+
 fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
     let (s, _) = take_whitespace(s)?;
 
@@ -652,6 +755,130 @@ fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, 
             length: comment.len(),
         },
     ))
+}
+
+fn parse_directive<'a, E: ParseError<Span<'a>>>(
+    s: Span<'a>,
+) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    fn primitive_directive<'a, E: ParseError<Span<'a>>>(
+        mut body: impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E>,
+    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+        move |s| {
+            let (s, _) = tag("[")(s)?;
+            let (s, _) = take_whitespace(s)?;
+            let (s, bd) = body(s)?;
+            let (s, _) = take_whitespace(s)?;
+            let (s, _) = tag("]")(s)?;
+            Ok((s, bd))
+        }
+    }
+
+    fn user_directive<'a, E: ParseError<Span<'a>>>(
+        mut body: impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E>,
+    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+        move |s| {
+            let (s, _) = take_whitespace(s)?;
+            let (s, bd) = body(s)?;
+            let (s, _) = take_whitespace(s)?;
+            Ok((s, bd))
+        }
+    }
+
+    fn two_parter<'a, E: ParseError<Span<'a>>>(
+        name: &'static str,
+        mut argument: impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E>,
+        mapping: impl Fn(Span<'a>) -> RawToken<'a>,
+    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+        move |s| {
+            let (s, name) = tag_no_case(name)(s)?;
+            let (s, _) = satisfy(is_space)(s)?;
+            let (s, _) = take_whitespace(s)?;
+            let (s, args) = argument(s)?;
+            let mut out = vec![mapping(name)];
+            out.extend(args.into_iter());
+            Ok((s, out))
+        }
+    }
+
+    let bits = two_parter(
+        "bits",
+        map(alt((tag("64"), tag("32"), tag("16"))), |x| {
+            vec![RawToken::from_span(TokenKind::Number(Base::Decimal), x)]
+        }),
+        |span| RawToken::from_span(TokenKind::BitsDirective, span),
+    );
+
+    let default = two_parter(
+        "default",
+        map(
+            alt((tag("REL"), tag("ABS"), tag("BND"), tag("NOBND"))),
+            |span| vec![RawToken::from_span(TokenKind::DefaultsValue, span)],
+        ),
+        |span| RawToken::from_span(TokenKind::Default, span),
+    );
+
+    let section = two_parter(
+        "section",
+        map(
+            parse_wordy(is_label_start, is_label, TokenKind::SectionName),
+            |s| vec![s],
+        ),
+        |span| RawToken::from_span(TokenKind::Section, span),
+    );
+
+    let segment = two_parter(
+        "segment",
+        map(
+            parse_wordy(is_label_start, is_label, TokenKind::SectionName),
+            |s| vec![s],
+        ),
+        |span| RawToken::from_span(TokenKind::Section, span),
+    );
+
+    let global = two_parter(
+        "global",
+        separated_list1(
+            tag(","),
+            parse_wordy(is_label_start, is_label, TokenKind::GlobalValue),
+        ),
+        |span| RawToken::from_span(TokenKind::Global, span),
+    );
+
+    // TODO: wrt
+    let ext = two_parter(
+        "extern",
+        separated_list1(
+            tag(","),
+            parse_wordy(is_label_start, is_label, TokenKind::ExternValue),
+        ),
+        |span| RawToken::from_span(TokenKind::Extern, span),
+    );
+
+    let (s, (directive, comment)) = terminated(
+        tuple((
+            delimited(
+                take_whitespace,
+                alt((
+                    primitive_directive(bits),
+                    user_directive(default),
+                    user_directive(section),
+                    user_directive(segment),
+                    user_directive(ext),
+                    user_directive(global),
+                )),
+                take_whitespace,
+            ),
+            opt(parse_comment),
+        )),
+        tag("\n"),
+    )(s)?;
+
+    let mut out = directive;
+    if let Some(comment) = comment {
+        out.push(comment);
+    }
+
+    Ok((s, out))
 }
 
 fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
@@ -681,7 +908,11 @@ fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
         output.push(label);
     }
 
-    let (s, ops) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_op)(s), output, s);
+    let (s, ops) = unwrap_or_return_illegal!(
+        opt::<_, _, E, _>(alt((parse_equ, parse_decl, parse_op)))(s),
+        output,
+        s
+    );
     if let Some(ops) = ops {
         output.extend(ops);
     }
@@ -701,7 +932,11 @@ fn parse_all<'a, E: ParseError<Span<'a>>>(
 ) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
     let mut output = vec![];
     while !input.is_empty() {
-        let (rest, line) = parse_line(input)?;
+        let (rest, line) = alt((
+            terminated(take_whitespace, tag("\n")).map(|_| vec![]),
+            parse_directive,
+            parse_line,
+        ))(input)?;
         input = rest;
         output.extend(line.into_iter());
     }
@@ -728,6 +963,10 @@ mod tests {
 
         let mut output = String::new();
         // eprintln!("{tokens:?}");
+        if let Some(x) = tokens.iter().find(|x| matches!(x.kind, TokenKind::Illegal)) {
+            dbg!(x);
+            panic!("ajksd");
+        }
         for (row, line) in input.lines().enumerate() {
             output += line;
             output += "\n";
@@ -740,7 +979,10 @@ mod tests {
 
                 output += &" ".repeat(tok.col - 1);
                 output += &"^".repeat(tok.text.len());
-                output += &format!(" {tok:?}");
+                output += &format!(
+                    " {:?} : ({}/{}) {:?}",
+                    tok.kind, tok.line, tok.col, tok.text
+                );
                 output += "\n"
             }
         }
@@ -766,6 +1008,7 @@ mod tests {
     snap!(hello, "../testdata/hello.asm");
     snap!(printf1, "../testdata/printf1.asm");
     snap!(hm, "../testdata/hm.asm");
+    snap!(directives, "../testdata/directives.asm");
 
     mod components {
         use super::*;

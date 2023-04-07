@@ -1,0 +1,89 @@
+---
+source: crates/lexer/src/lib.rs
+expression: snapshot
+---
+;  hello.asm  a first program for nasm for Linux, Intel, gcc
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (1/2) "  hello.asm  a first program for nasm for Linux, Intel, gcc"
+;
+  Comment : (2/2) ""
+; assemble:    nasm -f elf -l hello.lst  hello.asm
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (3/2) " assemble:    nasm -f elf -l hello.lst  hello.asm"
+; link:        gcc -o hello  hello.o
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (4/2) " link:        gcc -o hello  hello.o"
+; run:            hello 
+ ^^^^^^^^^^^^^^^^^^^^^^^ Comment : (5/2) " run:            hello "
+; output is:    Hello World 
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (6/2) " output is:    Hello World "
+
+    SECTION .data        ; data section
+    ^^^^^^^ Section : (8/5) "SECTION"
+            ^^^^^ SectionName : (8/13) ".data"
+                          ^^^^^^^^^^^^^ Comment : (8/27) " data section"
+msg:    db "Hello World",10    ; the string to print, 10=cr
+^^^ Label : (9/1) "msg"
+        ^^ DeclareMemoryInit : (9/9) "db"
+            ^^^^^^^^^^^ String : (9/13) "Hello World"
+                         ^^ Number(Decimal) : (9/26) "10"
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (9/33) " the string to print, 10=cr"
+len:    equ $-msg        ; "$" means "here"
+^^^ Label : (10/1) "len"
+        ^^^ Equ : (10/9) "equ"
+            ^ Ident : (10/13) "$"
+             ^ Minus : (10/14) "-"
+              ^^^ Ident : (10/15) "msg"
+                          ^^^^^^^^^^^^^^^^^ Comment : (10/27) " \"$\" means \"here\""
+     ; len is a value, not an address
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (11/7) " len is a value, not an address"
+
+    SECTION .text          ; code section
+    ^^^^^^^ Section : (13/5) "SECTION"
+            ^^^^^ SectionName : (13/13) ".text"
+                            ^^^^^^^^^^^^^ Comment : (13/29) " code section"
+        global main        ; make label available to linker 
+        ^^^^^^ Global : (14/9) "global"
+               ^^^^ GlobalValue : (14/16) "main"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (14/29) " make label available to linker "
+main:                      ; standard  gcc  entry point
+^^^^ Label : (15/1) "main"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (15/29) " standard  gcc  entry point"
+    
+    mov    edx,len         ; arg3, length of string to print
+    ^^^ Instruction : (17/5) "mov"
+           ^^^ Register : (17/12) "edx"
+               ^^^ Register : (17/16) "len"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (17/29) " arg3, length of string to print"
+    mov    ecx,msg         ; arg2, pointer to string
+    ^^^ Instruction : (18/5) "mov"
+           ^^^ Register : (18/12) "ecx"
+               ^^^ Register : (18/16) "msg"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (18/29) " arg2, pointer to string"
+    mov    ebx,1           ; arg1, where to write, screen
+    ^^^ Instruction : (19/5) "mov"
+           ^^^ Register : (19/12) "ebx"
+               ^ Number(Decimal) : (19/16) "1"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (19/29) " arg1, where to write, screen"
+    mov    eax,4           ; write sysout command to int 80 hex
+    ^^^ Instruction : (20/5) "mov"
+           ^^^ Register : (20/12) "eax"
+               ^ Number(Decimal) : (20/16) "4"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (20/29) " write sysout command to int 80 hex"
+    int    0x80            ; interrupt 80 hex, call kernel
+    ^^^ Instruction : (21/5) "int"
+             ^^ Number(Hexadecimal) : (21/14) "80"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (21/29) " interrupt 80 hex, call kernel"
+    
+    mov    ebx,0           ; exit code, 0=normal
+    ^^^ Instruction : (23/5) "mov"
+           ^^^ Register : (23/12) "ebx"
+               ^ Number(Decimal) : (23/16) "0"
+                            ^^^^^^^^^^^^^^^^^^^^ Comment : (23/29) " exit code, 0=normal"
+    mov    eax,1           ; exit command to kernel
+    ^^^ Instruction : (24/5) "mov"
+           ^^^ Register : (24/12) "eax"
+               ^ Number(Decimal) : (24/16) "1"
+                            ^^^^^^^^^^^^^^^^^^^^^^^ Comment : (24/29) " exit command to kernel"
+    int    0x80            ; interrupt 80 hex, call kernel
+    ^^^ Instruction : (25/5) "int"
+             ^^ Number(Hexadecimal) : (25/14) "80"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (25/29) " interrupt 80 hex, call kernel"
+

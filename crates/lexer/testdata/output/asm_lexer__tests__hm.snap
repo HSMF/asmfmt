@@ -3,39 +3,39 @@ source: crates/lexer/src/lib.rs
 expression: snapshot
 ---
 main: mov eax, rax ; this is a comment
-^^^^ Token { kind: Label, line: 1, col: 1, text: "main" }
-      ^^^ Token { kind: Instruction, line: 1, col: 7, text: "mov" }
-          ^^^ Token { kind: Register, line: 1, col: 11, text: "eax" }
-               ^^^ Token { kind: Register, line: 1, col: 16, text: "rax" }
-                    ^^^^^^^^^^^^^^^^^^ Token { kind: Comment, line: 1, col: 21, text: " this is a comment" }
+^^^^ Label : (1/1) "main"
+      ^^^ Instruction : (1/7) "mov"
+          ^^^ Register : (1/11) "eax"
+               ^^^ Register : (1/16) "rax"
+                    ^^^^^^^^^^^^^^^^^^ Comment : (1/21) " this is a comment"
       mov ebx, [esp+120 - rax*2]
-      ^^^ Token { kind: Instruction, line: 2, col: 7, text: "mov" }
-          ^^^ Token { kind: Register, line: 2, col: 11, text: "ebx" }
-               ^ Token { kind: OpenEffectiveAddress, line: 2, col: 16, text: "[" }
-                ^^^ Token { kind: Ident, line: 2, col: 17, text: "esp" }
-                   ^ Token { kind: Plus, line: 2, col: 20, text: "+" }
-                    ^^^ Token { kind: Number(Decimal), line: 2, col: 21, text: "120" }
-                        ^ Token { kind: Minus, line: 2, col: 25, text: "-" }
-                          ^^^ Token { kind: Ident, line: 2, col: 27, text: "rax" }
-                             ^ Token { kind: Times, line: 2, col: 30, text: "*" }
-                              ^ Token { kind: Number(Decimal), line: 2, col: 31, text: "2" }
-                               ^ Token { kind: CloseEffectiveAddress, line: 2, col: 32, text: "]" }
+      ^^^ Instruction : (2/7) "mov"
+          ^^^ Register : (2/11) "ebx"
+               ^ OpenEffectiveAddress : (2/16) "["
+                ^^^ Ident : (2/17) "esp"
+                   ^ Plus : (2/20) "+"
+                    ^^^ Number(Decimal) : (2/21) "120"
+                        ^ Minus : (2/25) "-"
+                          ^^^ Ident : (2/27) "rax"
+                             ^ Times : (2/30) "*"
+                              ^ Number(Decimal) : (2/31) "2"
+                               ^ CloseEffectiveAddress : (2/32) "]"
       mov eax, [somewhere - else ]
-      ^^^ Token { kind: Instruction, line: 3, col: 7, text: "mov" }
-          ^^^ Token { kind: Register, line: 3, col: 11, text: "eax" }
-               ^ Token { kind: OpenEffectiveAddress, line: 3, col: 16, text: "[" }
-                ^^^^^^^^^ Token { kind: Ident, line: 3, col: 17, text: "somewhere" }
-                          ^ Token { kind: Minus, line: 3, col: 27, text: "-" }
-                            ^^^^ Token { kind: Ident, line: 3, col: 29, text: "else" }
-                                 ^ Token { kind: CloseEffectiveAddress, line: 3, col: 34, text: "]" }
+      ^^^ Instruction : (3/7) "mov"
+          ^^^ Register : (3/11) "eax"
+               ^ OpenEffectiveAddress : (3/16) "["
+                ^^^^^^^^^ Ident : (3/17) "somewhere"
+                          ^ Minus : (3/27) "-"
+                            ^^^^ Ident : (3/29) "else"
+                                 ^ CloseEffectiveAddress : (3/34) "]"
  mai: mov eax, rax ; nonlabel: jmp main
- ^^^ Token { kind: Label, line: 4, col: 2, text: "mai" }
-      ^^^ Token { kind: Instruction, line: 4, col: 7, text: "mov" }
-          ^^^ Token { kind: Register, line: 4, col: 11, text: "eax" }
-               ^^^ Token { kind: Register, line: 4, col: 16, text: "rax" }
-                    ^^^^^^^^^^^^^^^^^^^ Token { kind: Comment, line: 4, col: 21, text: " nonlabel: jmp main" }
+ ^^^ Label : (4/2) "mai"
+      ^^^ Instruction : (4/7) "mov"
+          ^^^ Register : (4/11) "eax"
+               ^^^ Register : (4/16) "rax"
+                    ^^^^^^^^^^^^^^^^^^^ Comment : (4/21) " nonlabel: jmp main"
      mov eax, "hell\xabo"
-     ^^^ Token { kind: Instruction, line: 5, col: 6, text: "mov" }
-         ^^^ Token { kind: Register, line: 5, col: 10, text: "eax" }
-               ^^^^^^^^^ Token { kind: String, line: 5, col: 16, text: "hell\\xabo" }
+     ^^^ Instruction : (5/6) "mov"
+         ^^^ Register : (5/10) "eax"
+               ^^^^^^^^^ String : (5/16) "hell\\xabo"
 

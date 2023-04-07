@@ -1,0 +1,142 @@
+---
+source: crates/lexer/src/lib.rs
+expression: snapshot
+---
+; printf1.asm   print an integer from storage and from a register
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (1/2) " printf1.asm   print an integer from storage and from a register"
+; Assemble:    nasm -f elf -l printf.lst  printf1.asm
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (2/2) " Assemble:    nasm -f elf -l printf.lst  printf1.asm"
+; Link:        gcc -o printf1  printf1.o
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (3/2) " Link:        gcc -o printf1  printf1.o"
+; Run:        printf1
+ ^^^^^^^^^^^^^^^^^^^^ Comment : (4/2) " Run:        printf1"
+; Output:    a=5, eax=7
+ ^^^^^^^^^^^^^^^^^^^^^^ Comment : (5/2) " Output:    a=5, eax=7"
+
+; Equivalent C code
+ ^^^^^^^^^^^^^^^^^^ Comment : (7/2) " Equivalent C code"
+; /* printf1.c  print an int and an expression */
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (8/2) " /* printf1.c  print an int and an expression */"
+; #include 
+ ^^^^^^^^^^ Comment : (9/2) " #include "
+; int main()
+ ^^^^^^^^^^^ Comment : (10/2) " int main()"
+; {
+ ^^ Comment : (11/2) " {"
+;   int a=5;
+ ^^^^^^^^^^^ Comment : (12/2) "   int a=5;"
+;   printf("a=%d, eax=%d\n", a, a+2);
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (13/2) "   printf(\"a=%d, eax=%d\\n\", a, a+2);"
+;   return 0;
+ ^^^^^^^^^^^^ Comment : (14/2) "   return 0;"
+; }
+ ^^ Comment : (15/2) " }"
+
+; Declare some external functions
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (17/2) " Declare some external functions"
+;
+  Comment : (18/2) ""
+        extern    printf        ; the C function, to be called
+        ^^^^^^ Extern : (19/9) "extern"
+                  ^^^^^^ ExternValue : (19/19) "printf"
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (19/34) " the C function, to be called"
+
+        SECTION .data        ; Data section, initialized variables
+        ^^^^^^^ Section : (21/9) "SECTION"
+                ^^^^^ SectionName : (21/17) ".data"
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (21/31) " Data section, initialized variables"
+
+  a:    dd    5        ; int a=5;
+  ^ Label : (23/3) "a"
+        ^^ DeclareMemoryInit : (23/9) "dd"
+              ^ Number(Decimal) : (23/15) "5"
+                        ^^^^^^^^^ Comment : (23/25) " int a=5;"
+fmt:    db "a=%d, eax=%d", 10, 0 ; The printf format, "\n",'0'
+^^^ Label : (24/1) "fmt"
+        ^^ DeclareMemoryInit : (24/9) "db"
+            ^^^^^^^^^^^^ String : (24/13) "a=%d, eax=%d"
+                           ^^ Number(Decimal) : (24/28) "10"
+                               ^ Number(Decimal) : (24/32) "0"
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (24/35) " The printf format, \"\\n\",'0'"
+
+
+    SECTION .text                   ; Code section.
+    ^^^^^^^ Section : (27/5) "SECTION"
+            ^^^^^ SectionName : (27/13) ".text"
+                                     ^^^^^^^^^^^^^^ Comment : (27/38) " Code section."
+
+    global main        ; the standard gcc entry point
+    ^^^^^^ Global : (29/5) "global"
+           ^^^^ GlobalValue : (29/12) "main"
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (29/25) " the standard gcc entry point"
+main:                ; the program label for the entry point
+^^^^ Label : (30/1) "main"
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (30/23) " the program label for the entry point"
+    push    ebp        ; set up stack frame
+    ^^^^ Instruction : (31/5) "push"
+            ^^^ Register : (31/13) "ebp"
+                        ^^^^^^^^^^^^^^^^^^^ Comment : (31/25) " set up stack frame"
+    mov     ebp,esp
+    ^^^ Instruction : (32/5) "mov"
+            ^^^ Register : (32/13) "ebp"
+                ^^^ Register : (32/17) "esp"
+
+    mov    eax, [a]    ; put a from store into register
+    ^^^ Instruction : (34/5) "mov"
+           ^^^ Register : (34/12) "eax"
+                ^ OpenEffectiveAddress : (34/17) "["
+                 ^ Ident : (34/18) "a"
+                  ^ CloseEffectiveAddress : (34/19) "]"
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (34/25) " put a from store into register"
+    add    eax, 2        ; a+2
+    ^^^ Instruction : (35/5) "add"
+           ^^^ Register : (35/12) "eax"
+                ^ Number(Decimal) : (35/17) "2"
+                          ^^^^ Comment : (35/27) " a+2"
+    push    eax        ; value of a+2
+    ^^^^ Instruction : (36/5) "push"
+            ^^^ Register : (36/13) "eax"
+                        ^^^^^^^^^^^^^ Comment : (36/25) " value of a+2"
+    push    dword [a]    ; value of variable a
+    ^^^^ Instruction : (37/5) "push"
+            ^^^^^ Size : (37/13) "dword"
+                  ^ OpenEffectiveAddress : (37/19) "["
+                   ^ Ident : (37/20) "a"
+                    ^ CloseEffectiveAddress : (37/21) "]"
+                          ^^^^^^^^^^^^^^^^^^^^ Comment : (37/27) " value of variable a"
+    push    dword fmt    ; address of ctrl string
+    ^^^^ Instruction : (38/5) "push"
+            ^^^^^ Size : (38/13) "dword"
+                  ^^^ Ident : (38/19) "fmt"
+                          ^^^^^^^^^^^^^^^^^^^^^^^ Comment : (38/27) " address of ctrl string"
+    call    printf        ; Call C function
+    ^^^^ Instruction : (39/5) "call"
+            ^^^^^^ Register : (39/13) "printf"
+                           ^^^^^^^^^^^^^^^^ Comment : (39/28) " Call C function"
+    add     esp, 12        ; pop stack 3 push times 4 bytes
+    ^^^ Instruction : (40/5) "add"
+            ^^^ Register : (40/13) "esp"
+                 ^^ Number(Decimal) : (40/18) "12"
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (40/29) " pop stack 3 push times 4 bytes"
+
+    mov     esp, ebp    ; takedown stack frame
+    ^^^ Instruction : (42/5) "mov"
+            ^^^ Register : (42/13) "esp"
+                 ^^^ Register : (42/18) "ebp"
+                         ^^^^^^^^^^^^^^^^^^^^^ Comment : (42/26) " takedown stack frame"
+    pop     ebp        ; same as "leave" op
+    ^^^ Instruction : (43/5) "pop"
+            ^^^ Register : (43/13) "ebp"
+                        ^^^^^^^^^^^^^^^^^^^ Comment : (43/25) " same as \"leave\" op"
+
+    mov    eax,0        ;  normal, no error, return value
+    ^^^ Instruction : (45/5) "mov"
+           ^^^ Register : (45/12) "eax"
+               ^ Number(Decimal) : (45/16) "0"
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (45/26) "  normal, no error, return value"
+    ret            ; return
+    ^^^ Instruction : (46/5) "ret"
+                    ^^^^^^^ Comment : (46/21) " return"
+    
+
+

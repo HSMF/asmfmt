@@ -1,0 +1,41 @@
+---
+source: crates/lexer/src/lib.rs
+expression: snapshot
+---
+    SECTION .data        ; data section
+    ^^^^^^^ Section : (1/5) "SECTION"
+            ^^^^^ SectionName : (1/13) ".data"
+                          ^^^^^^^^^^^^^ Comment : (1/27) " data section"
+    section .text
+    ^^^^^^^ Section : (2/5) "section"
+            ^^^^^ SectionName : (2/13) ".text"
+    a:    db "aaaaaa\n"
+    ^ Label : (3/5) "a"
+          ^^ DeclareMemoryInit : (3/11) "db"
+              ^^^^^^^^ String : (3/15) "aaaaaa\\n"
+    mov    eax, [a]
+    ^^^ Instruction : (4/5) "mov"
+           ^^^ Register : (4/12) "eax"
+                ^ OpenEffectiveAddress : (4/17) "["
+                 ^ Ident : (4/18) "a"
+                  ^ CloseEffectiveAddress : (4/19) "]"
+    push    dword [a]    ; value of variable a
+    ^^^^ Instruction : (5/5) "push"
+            ^^^^^ Size : (5/13) "dword"
+                  ^ OpenEffectiveAddress : (5/19) "["
+                   ^ Ident : (5/20) "a"
+                    ^ CloseEffectiveAddress : (5/21) "]"
+                          ^^^^^^^^^^^^^^^^^^^^ Comment : (5/27) " value of variable a"
+    push    dword fmt    ; address of ctrl string
+    ^^^^ Instruction : (6/5) "push"
+            ^^^^^ Size : (6/13) "dword"
+                  ^^^ Ident : (6/19) "fmt"
+                          ^^^^^^^^^^^^^^^^^^^^^^^ Comment : (6/27) " address of ctrl string"
+main:
+^^^^ Label : (7/1) "main"
+    
+    int 0x80
+    ^^^ Instruction : (9/5) "int"
+          ^^ Number(Hexadecimal) : (9/11) "80"
+
+
