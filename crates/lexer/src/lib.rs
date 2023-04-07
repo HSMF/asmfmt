@@ -19,11 +19,11 @@
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_while, take_while_m_n},
+    bytes::complete::{tag, take_until, take_until1, take_while, take_while_m_n},
     character::complete::{one_of, satisfy},
-    combinator::{map, not, opt},
+    combinator::{fail, map, not, opt},
     error::ParseError,
-    multi::{many0, many_m_n, separated_list0},
+    multi::{many_m_n, separated_list0},
     sequence::{delimited, preceded, terminated, tuple},
     IResult, Parser,
 };
@@ -101,6 +101,7 @@ pub enum TokenKind {
     BitNegation,
     SignedCmp,
     Wrt,
+    Ident,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -144,6 +145,7 @@ pub type Span<'a> = LocatedSpan<&'a str>;
 fn is_word_start(ch: char) -> bool {
     ch.is_ascii_alphabetic()
 }
+
 fn is_word(ch: char) -> bool {
     is_word_start(ch) || ch.is_ascii_digit()
 }
@@ -154,6 +156,14 @@ fn is_label_start(ch: char) -> bool {
 
 fn is_label(ch: char) -> bool {
     is_label_start(ch) || ch.is_ascii_digit()
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch.is_alphabetic() || matches!(ch, '_' | '$' | '.' | '?')
+}
+
+fn is_ident(ch: char) -> bool {
+    is_label_start(ch) || ch.is_ascii_digit() || ch == ':'
 }
 
 fn is_space(ch: char) -> bool {
@@ -207,9 +217,21 @@ fn parse_instruction<'a, E: ParseError<Span<'a>>>(
 
 fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
     // boolean ? trueval : falseval
-    let conditional_operator = |s| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    let conditional_operator = |s: Span<'a>| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
         let mut out = vec![];
-        let (s, boolean) = parse_expr(s)?;
+
+        let (s, boolean) = if s.starts_with('(') {
+            parse_expr(s)?
+        } else {
+            let (s, left) = take_until1("?")(s)?;
+            let (remainder, a) = parse_expr(left)?;
+            if !remainder.is_empty() {
+                fail::<_, (), E>(s)?;
+            }
+
+            (s, a)
+        };
+
         let (s, ternary_if) = tag("?")(s)?;
         let (s, trueval) = parse_expr(s)?;
         let (s, ternary_else) = tag(":")(s)?;
@@ -225,14 +247,26 @@ fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
     };
 
     let binop = move |operator: &'static str, kind| {
-        move |s| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+        move |s: Span<'a>| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
             let mut out = vec![];
-            let (s, a) = parse_expr(s)?;
-            let (s, bool_or) = tag(operator)(s)?;
+
+            let (s, a) = if s.starts_with('(') {
+                parse_expr(s)?
+            } else {
+                let (s, left) = take_until1(operator)(s)?;
+                let (remainder, a) = parse_expr(left)?;
+                if !remainder.is_empty() {
+                    fail::<_, (), E>(s)?;
+                }
+
+                (s, a)
+            };
+
+            let (s, op) = tag(operator)(s)?;
             let (s, b) = parse_expr(s)?;
 
             out.extend(a.into_iter());
-            out.push(RawToken::from_span(kind, bool_or));
+            out.push(RawToken::from_span(kind, op));
             out.extend(b.into_iter());
 
             Ok((s, out))
@@ -292,14 +326,6 @@ fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
 
     // TODO: implement https://www.nasm.us/doc/nasmdoc6.html#section-6.4
 
-    let mut out = vec![];
-    let (s, _) = take_whitespace(s)?;
-    let (s, open_paren) = opt(tag("("))(s)?;
-    let (s, _) = take_whitespace(s)?;
-    if let Some(paren) = open_paren {
-        out.push(RawToken::from_span(TokenKind::OpenParen, paren));
-    }
-
     let unops = alt((
         mul,
         div_signed,
@@ -336,7 +362,20 @@ fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
         wrt,
     ));
 
-    let (s, expr) = alt((unops, binops, conditional_operator))(s)?;
+    let mut out = vec![];
+    let (s, _) = take_whitespace(s)?;
+    let (s, open_paren) = opt(tag("("))(s)?;
+    let (s, _) = take_whitespace(s)?;
+    if let Some(paren) = open_paren {
+        out.push(RawToken::from_span(TokenKind::OpenParen, paren));
+    }
+    let (s, expr) = alt((
+        unops,
+        binops,
+        conditional_operator,
+        parse_number.map(|x| vec![x]),
+        parse_wordy(is_ident_start, is_ident, TokenKind::Ident).map(|x| vec![x]),
+    ))(s)?;
     out.extend(expr.into_iter());
 
     let (s, _) = take_whitespace(s)?;
@@ -558,14 +597,6 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
 fn parse_operands<'a, E: ParseError<Span<'a>>>(
     s: Span<'a>,
 ) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
-    let tg = move |v, kind| {
-        map(tag(v), move |s| RawToken {
-            kind,
-            pos: s,
-            length: s.len(),
-        })
-    };
-
     let parse_effective_addr = |s| {
         let mut out = vec![];
         let (s, _) = take_whitespace(s)?;
@@ -573,26 +604,14 @@ fn parse_operands<'a, E: ParseError<Span<'a>>>(
         // TODO: nosplit
         // TODO: rel
         out.push(RawToken::from_span(TokenKind::OpenEffectiveAddress, o));
-        let (s, first) = parse_wordy(is_word_start, is_word, TokenKind::Label)(s)?;
-        out.push(first);
 
-        let (s, rest) = many0(tuple((
-            alt((
-                tg("+", TokenKind::Plus),
-                tg("*", TokenKind::Times),
-                tg("-", TokenKind::Minus),
-                tg(",", TokenKind::Split),
-            )),
-            alt((
-                // parse number first because $<hex> is a number while $<label> is a label
-                parse_number,
-                parse_wordy(is_word_start, is_word, TokenKind::Label),
-            )),
-        )))(s)?;
-        for (operator, op) in rest {
-            out.push(operator);
-            out.push(op);
+        let (s, expr) = parse_expr(s)?;
+        out.extend(expr.into_iter());
+        let (s, expr) = opt(preceded(tag(","), parse_expr))(s)?;
+        if let Some(expr) = expr {
+            out.extend(expr.into_iter());
         }
+
         let (s, o) = tag("]")(s)?;
         out.push(RawToken::from_span(TokenKind::CloseEffectiveAddress, o));
         Ok((s, out))

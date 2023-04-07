@@ -12,11 +12,11 @@ main: mov eax, rax ; this is a comment
       ^^^ Token { kind: Instruction, line: 2, col: 7, text: "mov" }
           ^^^ Token { kind: Register, line: 2, col: 11, text: "ebx" }
                ^ Token { kind: OpenEffectiveAddress, line: 2, col: 16, text: "[" }
-                ^^^ Token { kind: Label, line: 2, col: 17, text: "esp" }
+                ^^^ Token { kind: Ident, line: 2, col: 17, text: "esp" }
                    ^ Token { kind: Plus, line: 2, col: 20, text: "+" }
                     ^^^ Token { kind: Number(Decimal), line: 2, col: 21, text: "120" }
                         ^ Token { kind: Minus, line: 2, col: 25, text: "-" }
-                          ^^^ Token { kind: Label, line: 2, col: 27, text: "rax" }
+                          ^^^ Token { kind: Ident, line: 2, col: 27, text: "rax" }
                              ^ Token { kind: Times, line: 2, col: 30, text: "*" }
                               ^ Token { kind: Number(Decimal), line: 2, col: 31, text: "2" }
                                ^ Token { kind: CloseEffectiveAddress, line: 2, col: 32, text: "]" }
@@ -24,9 +24,9 @@ main: mov eax, rax ; this is a comment
       ^^^ Token { kind: Instruction, line: 3, col: 7, text: "mov" }
           ^^^ Token { kind: Register, line: 3, col: 11, text: "eax" }
                ^ Token { kind: OpenEffectiveAddress, line: 3, col: 16, text: "[" }
-                ^^^^^^^^^ Token { kind: Label, line: 3, col: 17, text: "somewhere" }
+                ^^^^^^^^^ Token { kind: Ident, line: 3, col: 17, text: "somewhere" }
                           ^ Token { kind: Minus, line: 3, col: 27, text: "-" }
-                            ^^^^ Token { kind: Label, line: 3, col: 29, text: "else" }
+                            ^^^^ Token { kind: Ident, line: 3, col: 29, text: "else" }
                                  ^ Token { kind: CloseEffectiveAddress, line: 3, col: 34, text: "]" }
  mai: mov eax, rax ; nonlabel: jmp main
  ^^^ Token { kind: Label, line: 4, col: 2, text: "mai" }
