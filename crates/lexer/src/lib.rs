@@ -980,6 +980,54 @@ fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Raw
     ))
 }
 
+/// Iterator that yields (logical) source lines
+///
+/// ```
+/// # use asm_lexer::Lexer;
+/// let source = "lbl: add eax, 200";
+///
+/// let mut lexer = Lexer::new(source);
+///
+/// // a line is a NASM source line: `label:    instruction operands        ; comment`
+/// assert!(lexer.next().expect("it has first line").expect("didn't error").is_line());
+///
+/// // there is only one line
+/// assert!(lexer.next().is_none());
+/// ```
+pub struct Lexer<'a> {
+    orig: &'a str,
+    input: Span<'a>,
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a str) -> Self {
+        Self {
+            input: Span::new(input),
+            orig: input,
+        }
+    }
+}
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Result<TopLevel<'a>, ErrorTree<Span<'a>>>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.input.is_empty() {
+            return None;
+        }
+
+        if let Ok((rest, _)) =
+            terminated::<_, _, _, ErrorTree<Span<'a>>, _, _>(take_whitespace, nl)(self.input)
+        {
+            self.input = rest;
+            return self.next();
+        }
+        let (rest, line) =
+            alt::<_, _, ErrorTree<Span<'a>>, _>((parse_directive, parse_line))(self.input).ok()?;
+        self.input = rest;
+        Some(Ok(TopLevel::from_raw(line, self.orig)))
+    }
+}
+
 fn parse_all<'a, E: ParseError<Span<'a>>>(
     mut input: Span<'a>,
 ) -> IResult<Span<'a>, Vec<RawTopLevel>, E> {
@@ -998,6 +1046,14 @@ fn parse_all<'a, E: ParseError<Span<'a>>>(
 }
 
 // NOTE: this very much is *not* infallible
+/// Parses a NASM Program.
+///
+/// ```
+/// # let program = "mov rax, rcx";
+/// # use asm_lexer::parse;
+/// let mut lines = parse(program).unwrap();
+/// assert!(lines.next().unwrap().is_line());
+/// ```
 pub fn parse(input: &str) -> Result<impl Iterator<Item = TopLevel>, std::convert::Infallible> {
     let span = Span::new(input);
     let (s, all) = parse_all::<ErrorTree<Span>>(span).expect("handle error");
@@ -1012,7 +1068,9 @@ mod tests {
 
     use super::*;
     fn snapshot_lexing(input: &str) -> String {
-        let mut tokens = parse(input).unwrap().flatten().collect::<VecDeque<_>>();
+        let mut tokens = Lexer::new(input)
+            .flat_map(|x| x.unwrap())
+            .collect::<VecDeque<_>>();
 
         let mut output = String::new();
         // eprintln!("{tokens:?}");

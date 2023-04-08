@@ -22,6 +22,18 @@ pub enum RTopLevel<T> {
     },
 }
 
+impl<T> RTopLevel<T> {
+    pub fn is_line(&self) -> bool {
+        matches!(self, Self::Line { .. })
+    }
+    pub fn is_directive(&self) -> bool {
+        matches!(self, Self::Directive { .. })
+    }
+    pub fn is_illegal(&self) -> bool {
+        matches!(self, Self::Illegal { .. })
+    }
+}
+
 #[derive(Debug)]
 pub enum RTokenTree<T> {
     Expression {
