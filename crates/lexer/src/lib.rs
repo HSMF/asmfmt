@@ -30,7 +30,10 @@ use nom_locate::{position, LocatedSpan};
 use nom_supreme::error::ErrorTree;
 use token_tree::{RawTokenTree, RawTopLevel};
 
-use crate::token_tree::{single, TopLevel};
+use crate::token_tree::single;
+
+mod token_tree;
+pub use token_tree::{TokenTree, TopLevel};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The base of a number.
@@ -162,8 +165,6 @@ impl<'a> Token<'a> {
         }
     }
 }
-
-mod token_tree;
 
 pub type Span<'a> = LocatedSpan<&'a str>;
 
@@ -1007,7 +1008,7 @@ fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Raw
 /// let mut lexer = Lexer::new(source);
 ///
 /// // a line is a NASM source line: `label:    instruction operands        ; comment`
-/// assert!(lexer.next().expect("it has first line").expect("didn't error").is_line());
+/// assert!(lexer.next().expect("it has first line").is_line());
 ///
 /// // there is only one line
 /// assert!(lexer.next().is_none());
@@ -1027,7 +1028,7 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<TopLevel<'a>, ErrorTree<Span<'a>>>;
+    type Item = TopLevel<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.input.is_empty() {
             return None;
@@ -1042,7 +1043,7 @@ impl<'a> Iterator for Lexer<'a> {
         let (rest, line) =
             alt::<_, _, ErrorTree<Span<'a>>, _>((parse_directive, parse_line))(self.input).ok()?;
         self.input = rest;
-        Some(Ok(TopLevel::from_raw(line, self.orig)))
+        Some(TopLevel::from_raw(line, self.orig))
     }
 }
 
@@ -1086,9 +1087,7 @@ mod tests {
 
     use super::*;
     fn snapshot_lexing(input: &str) -> String {
-        let mut tokens = Lexer::new(input)
-            .flat_map(|x| x.unwrap())
-            .collect::<VecDeque<_>>();
+        let mut tokens = Lexer::new(input).flatten().collect::<VecDeque<_>>();
 
         let mut output = String::new();
         // eprintln!("{tokens:?}");
