@@ -7,7 +7,7 @@
 *
 * for token in parse(input).unwrap() {
 *   // do stuff
-*   // in case of failure, the token will contain 
+*   // in case of failure, the token will contain
 *   // the rest of the line and continue normally
 * }
 * ```
@@ -157,6 +157,8 @@ impl<'a> Token<'a> {
         }
     }
 }
+
+mod token_tree;
 
 pub type Span<'a> = LocatedSpan<&'a str>;
 
