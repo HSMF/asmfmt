@@ -20,7 +20,7 @@ use nom::{
         tag, tag_no_case, take_until, take_until1, take_while, take_while1, take_while_m_n,
     },
     character::complete::{one_of, satisfy},
-    combinator::{fail, map, not, opt},
+    combinator::{fail, map, not, opt, success},
     error::ParseError,
     multi::{many0, separated_list0, separated_list1},
     sequence::{delimited, preceded, terminated, tuple},
@@ -198,6 +198,24 @@ fn is_space(ch: char) -> bool {
 fn take_whitespace<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, (), E> {
     // TODO: handle '\<newline', which is whitespace
     let (s, _) = take_while(is_space)(s)?;
+    Ok((s, ()))
+}
+
+fn take_until_or_eos<'a, E: ParseError<Span<'a>>>(
+    pat: &'a str,
+) -> impl Fn(Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
+    move |s| match take_until::<_, _, E>(pat)(s) {
+        Ok(x) => Ok(x),
+        Err(_) => Ok((Span::new(""), s)),
+    }
+}
+
+fn nl<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, (), E> {
+    if s.is_empty() {
+        return success(())(s);
+    }
+
+    let (s, _) = tag("\n")(s)?;
     Ok((s, ()))
 }
 
@@ -771,7 +789,7 @@ fn parse_decl<'a, E: ParseError<Span<'a>>>(
 fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
     let (s, _) = take_whitespace(s)?;
 
-    let (s, comment) = preceded(tag(";"), take_until("\n"))(s)?;
+    let (s, comment) = preceded(tag(";"), take_until_or_eos("\n"))(s)?;
     Ok((
         s,
         RawToken {
@@ -912,7 +930,7 @@ fn parse_directive<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>
             ),
             opt(parse_comment),
         )),
-        tag("\n"),
+        nl,
     )(s)?;
 
     match &mut directive {
@@ -932,7 +950,7 @@ fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Raw
             match $e {
                 Ok(x) => x,
                 Err(_) => {
-                    let (rest, invalid) = terminated(take_until::<_, _, E>("\n"), tag("\n"))($s)
+                    let (rest, invalid) = terminated(take_until_or_eos::<E>("\n"), nl)($s)
                         .unwrap_or((Span::new(""), $s));
 
                     let length =
@@ -965,7 +983,7 @@ fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Raw
 
     let (s, comment) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_comment)(s), s);
 
-    let (s, _) = unwrap_or_return_illegal!(tag::<_, _, E>("\n")(s), s);
+    let (s, _) = unwrap_or_return_illegal!(nl::<E>(s), s);
 
     let (instruction, operands) = ops.unzip();
 
@@ -1033,7 +1051,7 @@ fn parse_all<'a, E: ParseError<Span<'a>>>(
 ) -> IResult<Span<'a>, Vec<RawTopLevel>, E> {
     let mut output = vec![];
     while !input.is_empty() {
-        if let Ok((rest, _)) = terminated::<_, _, _, E, _, _>(take_whitespace, tag("\n"))(input) {
+        if let Ok((rest, _)) = terminated::<_, _, _, E, _, _>(take_whitespace, nl)(input) {
             input = rest;
             continue;
         }
