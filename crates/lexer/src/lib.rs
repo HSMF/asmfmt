@@ -28,6 +28,9 @@ use nom::{
 };
 use nom_locate::{position, LocatedSpan};
 use nom_supreme::error::ErrorTree;
+use token_tree::{RawTokenTree, RawTopLevel};
+
+use crate::token_tree::{single, TopLevel};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The base of a number.
@@ -120,6 +123,8 @@ pub enum TokenKind {
 
     /// `equ`
     Equ,
+    ClosePrimitiveDirective,
+    OpenPrimitiveDirective,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -235,11 +240,9 @@ fn parse_instruction<'a, E: ParseError<Span<'a>>>(
     parse_wordy(is_word_start, is_word, TokenKind::Instruction)(s)
 }
 
-fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawTokenTree, E> {
     // boolean ? trueval : falseval
-    let conditional_operator = |s: Span<'a>| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
-        let mut out = vec![];
-
+    let conditional_operator = |s: Span<'a>| -> IResult<Span<'a>, RawTokenTree, E> {
         let (s, boolean) = if s.starts_with('(') {
             parse_expr(s)?
         } else {
@@ -257,19 +260,23 @@ fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
         let (s, ternary_else) = tag(":")(s)?;
         let (s, falseval) = parse_expr(s)?;
 
-        out.extend(boolean.into_iter());
-        out.push(RawToken::from_span(TokenKind::TernaryIf, ternary_if));
-        out.extend(trueval.into_iter());
-        out.push(RawToken::from_span(TokenKind::TernaryElse, ternary_else));
-        out.extend(falseval.into_iter());
+        let evaluation = RawTokenTree::Expression {
+            operator: RawToken::from_span(TokenKind::TernaryElse, ternary_else),
+            args: vec![trueval, falseval],
+            parenthesis: None,
+        };
+
+        let out = RawTokenTree::Expression {
+            operator: RawToken::from_span(TokenKind::TernaryIf, ternary_if),
+            args: vec![boolean, evaluation],
+            parenthesis: None,
+        };
 
         Ok((s, out))
     };
 
     let binop = move |operator: &'static str, kind| {
-        move |s: Span<'a>| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
-            let mut out = vec![];
-
+        move |s: Span<'a>| -> IResult<Span<'a>, RawTokenTree, E> {
             let (s, a) = if s.starts_with('(') {
                 parse_expr(s)?
             } else {
@@ -285,22 +292,26 @@ fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
             let (s, op) = tag(operator)(s)?;
             let (s, b) = parse_expr(s)?;
 
-            out.extend(a.into_iter());
-            out.push(RawToken::from_span(kind, op));
-            out.extend(b.into_iter());
+            let out = RawTokenTree::Expression {
+                operator: RawToken::from_span(kind, op),
+                args: vec![a, b],
+                parenthesis: None,
+            };
 
             Ok((s, out))
         }
     };
 
     let unop = move |operator: &'static str, kind| {
-        move |s| -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
-            let mut out = vec![];
+        move |s| -> IResult<Span<'a>, RawTokenTree, E> {
             let (s, bool_or) = tag(operator)(s)?;
             let (s, a) = parse_expr(s)?;
 
-            out.push(RawToken::from_span(kind, bool_or));
-            out.extend(a.into_iter());
+            let out = RawTokenTree::Expression {
+                operator: RawToken::from_span(kind, bool_or),
+                args: vec![a],
+                parenthesis: None,
+            };
 
             Ok((s, out))
         }
@@ -389,26 +400,31 @@ fn parse_expr<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
     if let Some(paren) = open_paren {
         out.push(RawToken::from_span(TokenKind::OpenParen, paren));
     }
-    let (s, expr) = alt((
+    let (s, mut expr) = alt((
         unops,
         binops,
         conditional_operator,
-        parse_number.map(|x| vec![x]),
-        parse_wordy(is_ident_start, is_ident, TokenKind::Ident).map(|x| vec![x]),
+        parse_number.map(|x| RawTokenTree::Single { id: x }),
+        parse_wordy(is_ident_start, is_ident, TokenKind::Ident)
+            .map(|id| RawTokenTree::Single { id }),
     ))(s)?;
-    out.extend(expr.into_iter());
 
     let (s, _) = take_whitespace(s)?;
-    let s = if open_paren.is_some() {
+    let s = if let Some(open_paren) = open_paren {
         let (s, close_paren) = tag(")")(s)?;
-        out.push(RawToken::from_span(TokenKind::OpenParen, close_paren));
+        if let RawTokenTree::Expression { parenthesis, .. } = &mut expr {
+            *parenthesis = Some((
+                RawToken::from_span(TokenKind::OpenParen, open_paren),
+                RawToken::from_span(TokenKind::CloseParen, close_paren),
+            ));
+        }
         s
     } else {
         s
     };
     let (s, _) = take_whitespace(s)?;
 
-    Ok((s, out))
+    Ok((s, expr))
 }
 
 fn parse_str<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
@@ -614,9 +630,8 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
 
 fn parse_operands<'a, E: ParseError<Span<'a>>>(
     s: Span<'a>,
-) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+) -> IResult<Span<'a>, Vec<RawTokenTree>, E> {
     let parse_effective_addr = |s| {
-        let mut out = vec![];
         let (s, _) = take_whitespace(s)?;
 
         let (s, size) = opt(terminated(
@@ -633,24 +648,26 @@ fn parse_operands<'a, E: ParseError<Span<'a>>>(
             take_whitespace,
         )
         .map(|s| RawToken::from_span(TokenKind::Size, s)))(s)?;
-        if let Some(size) = size {
-            out.push(size);
-        }
 
-        let (s, o) = tag("[")(s)?;
+        let (s, op) = tag("[")(s)?;
         // TODO: nosplit
         // TODO: rel
-        out.push(RawToken::from_span(TokenKind::OpenEffectiveAddress, o));
 
-        let (s, expr) = parse_expr(s)?;
-        out.extend(expr.into_iter());
-        let (s, expr) = opt(preceded(tag(","), parse_expr))(s)?;
-        if let Some(expr) = expr {
-            out.extend(expr.into_iter());
-        }
+        let (s, arg) = parse_expr(s)?;
+        let (s, index) = opt(preceded(tag(","), parse_expr))(s)?;
 
-        let (s, o) = tag("]")(s)?;
-        out.push(RawToken::from_span(TokenKind::CloseEffectiveAddress, o));
+        let (s, cl) = tag("]")(s)?;
+
+        let out = RawTokenTree::EffectiveAddress {
+            brackets: (
+                RawToken::from_span(TokenKind::OpenEffectiveAddress, op),
+                RawToken::from_span(TokenKind::CloseEffectiveAddress, cl),
+            ),
+            size,
+            arg: Box::new(arg),
+            index: index.map(Box::new),
+        };
+
         Ok((s, out))
     };
 
@@ -670,58 +687,62 @@ fn parse_operands<'a, E: ParseError<Span<'a>>>(
         tag(","),
         alt((
             parse_effective_addr,
-            parse_number.map(|x| vec![x]),
+            parse_number.map(single),
             tuple((
                 not(size),
                 parse_wordy(is_word_start, is_word, TokenKind::Register),
             ))
-            .map(|(_, x)| vec![x]),
-            tuple((
-                opt(terminated(
-                    size,
-                    tuple((satisfy(is_space), take_whitespace)),
-                )),
-                parse_wordy(is_ident_start, is_ident, TokenKind::Ident),
-            ))
-            .map(|(a, b)| {
-                let mut out = vec![];
-                if let Some(a) = a {
-                    out.push(RawToken::from_span(TokenKind::Size, a))
-                }
-                out.push(b);
-
-                out
-            }),
-            parse_str.map(|x| vec![x]),
+            .map(|(_, x)| x)
+            .map(single),
+            // TODO
+            // tuple((
+            //     opt(terminated(
+            //         size,
+            //         tuple((satisfy(is_space), take_whitespace)),
+            //     )),
+            //     parse_wordy(is_ident_start, is_ident, TokenKind::Ident),
+            // ))
+            // .map(|(a, b)| {
+            //     let mut out = vec![];
+            //     if let Some(a) = a {
+            //         out.push(RawToken::from_span(TokenKind::Size, a))
+            //     }
+            //     out.push(b);
+            //
+            //     out
+            // }),
+            parse_str.map(single),
         )),
     )(s)?;
 
-    Ok((s, x.into_iter().flatten().collect()))
+    Ok((s, x))
 }
 
-fn parse_op<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
-    let mut output = vec![];
+fn parse_op<'a, E: ParseError<Span<'a>>>(
+    s: Span<'a>,
+) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawTokenTree<'a>>), E> {
     let (s, instr) = parse_instruction(s)?;
-    output.push(instr);
 
     let (s, operands) = parse_operands(s)?;
-    output.extend(operands.into_iter());
 
-    Ok((s, output))
+    Ok((s, (instr, operands)))
 }
 
-fn parse_equ<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
-    let (s, _) = take_whitespace(s)?;
+// TODO:
+// fn parse_equ<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+//     let (s, _) = take_whitespace(s)?;
+//
+//     let (s, equ) = tag_no_case("equ")(s)?;
+//     let (s, _) = take_whitespace(s)?;
+//     let (s, val) = parse_expr(s)?;
+//     let mut out = vec![RawToken::from_span(TokenKind::Equ, equ)];
+//     out.extend(val.into_iter());
+//     Ok((s, out))
+// }
 
-    let (s, equ) = tag_no_case("equ")(s)?;
-    let (s, _) = take_whitespace(s)?;
-    let (s, val) = parse_expr(s)?;
-    let mut out = vec![RawToken::from_span(TokenKind::Equ, equ)];
-    out.extend(val.into_iter());
-    Ok((s, out))
-}
-
-fn parse_decl<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+fn parse_decl<'a, E: ParseError<Span<'a>>>(
+    s: Span<'a>,
+) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawTokenTree<'a>>), E> {
     let (s, _) = take_whitespace(s)?;
 
     let (s, declarer) = alt((
@@ -737,12 +758,14 @@ fn parse_decl<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec
         // tag_no_case("DZ"),
     ))(s)?;
 
-    let (s, value) = separated_list1(tag(","), alt((parse_number, parse_str)))(s)?;
+    let (s, value) = separated_list1(
+        tag(","),
+        alt((parse_number.map(single), parse_str.map(single))),
+    )(s)?;
 
-    let mut out = vec![RawToken::from_span(TokenKind::DeclareMemoryInit, declarer)];
-    out.extend(value.into_iter());
+    let init = RawToken::from_span(TokenKind::DeclareMemoryInit, declarer);
 
-    Ok((s, out))
+    Ok((s, (init, value)))
 }
 
 fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
@@ -759,30 +782,48 @@ fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, 
     ))
 }
 
-fn parse_directive<'a, E: ParseError<Span<'a>>>(
-    s: Span<'a>,
-) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+fn parse_directive<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawTopLevel, E> {
     fn primitive_directive<'a, E: ParseError<Span<'a>>>(
-        mut body: impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E>,
-    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+        mut body: impl FnMut(Span<'a>) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawToken<'a>>), E>,
+    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, RawTopLevel, E> {
         move |s| {
-            let (s, _) = tag("[")(s)?;
+            let (s, open) = tag("[")(s)?;
             let (s, _) = take_whitespace(s)?;
-            let (s, bd) = body(s)?;
+            let (s, (directive, args)) = body(s)?;
             let (s, _) = take_whitespace(s)?;
-            let (s, _) = tag("]")(s)?;
-            Ok((s, bd))
+            let (s, close) = tag("]")(s)?;
+
+            let open = RawToken::from_span(TokenKind::OpenPrimitiveDirective, open);
+            let close = RawToken::from_span(TokenKind::ClosePrimitiveDirective, close);
+
+            Ok((
+                s,
+                RawTopLevel::Directive {
+                    directive,
+                    args,
+                    brackets: Some((open, close)),
+                    comment: None,
+                },
+            ))
         }
     }
 
     fn user_directive<'a, E: ParseError<Span<'a>>>(
-        mut body: impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E>,
-    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+        mut body: impl FnMut(Span<'a>) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawToken<'a>>), E>,
+    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, RawTopLevel, E> {
         move |s| {
             let (s, _) = take_whitespace(s)?;
-            let (s, bd) = body(s)?;
+            let (s, (directive, args)) = body(s)?;
             let (s, _) = take_whitespace(s)?;
-            Ok((s, bd))
+            Ok((
+                s,
+                RawTopLevel::Directive {
+                    directive,
+                    args,
+                    brackets: None,
+                    comment: None,
+                },
+            ))
         }
     }
 
@@ -790,15 +831,14 @@ fn parse_directive<'a, E: ParseError<Span<'a>>>(
         name: &'static str,
         mut argument: impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E>,
         mapping: impl Fn(Span<'a>) -> RawToken<'a>,
-    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+    ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawToken<'a>>), E> {
         move |s| {
             let (s, name) = tag_no_case(name)(s)?;
             let (s, _) = satisfy(is_space)(s)?;
             let (s, _) = take_whitespace(s)?;
             let (s, args) = argument(s)?;
-            let mut out = vec![mapping(name)];
-            out.extend(args.into_iter());
-            Ok((s, out))
+            let directive = mapping(name);
+            Ok((s, (directive, args)))
         }
     }
 
@@ -856,7 +896,7 @@ fn parse_directive<'a, E: ParseError<Span<'a>>>(
         |span| RawToken::from_span(TokenKind::Extern, span),
     );
 
-    let (s, (directive, comment)) = terminated(
+    let (s, (mut directive, ccomment)) = terminated(
         tuple((
             delimited(
                 take_whitespace,
@@ -875,84 +915,95 @@ fn parse_directive<'a, E: ParseError<Span<'a>>>(
         tag("\n"),
     )(s)?;
 
-    let mut out = directive;
-    if let Some(comment) = comment {
-        out.push(comment);
+    match &mut directive {
+        RawTopLevel::Directive { comment, .. } => {
+            *comment = ccomment;
+        }
+        _ => unreachable!(),
     }
 
-    Ok((s, out))
+    Ok((s, directive))
 }
 
-fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawTopLevel, E> {
+    let (s, beginning) = position(s)?;
     macro_rules! unwrap_or_return_illegal {
-        ($e:expr, $output:expr, $s:expr) => {
+        ($e:expr, $s:expr) => {
             match $e {
                 Ok(x) => x,
                 Err(_) => {
                     let (rest, invalid) = terminated(take_until::<_, _, E>("\n"), tag("\n"))($s)
                         .unwrap_or((Span::new(""), $s));
 
-                    $output.push(RawToken {
-                        kind: TokenKind::Illegal,
-                        pos: invalid,
-                        length: invalid.len(),
-                    });
+                    let length =
+                        invalid.location_offset() + invalid.len() - beginning.location_offset();
 
-                    return Ok((rest, $output));
+                    let remainder = RawToken {
+                        kind: TokenKind::Illegal,
+                        pos: beginning,
+                        length,
+                    };
+
+                    return Ok((
+                        rest,
+                        RawTopLevel::Illegal {
+                            tokens: vec![],
+                            remainder,
+                        },
+                    ));
                 }
             }
         };
     }
 
-    let mut output = vec![];
-    let (s, label) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_label)(s), output, s);
-    if let Some(label) = label {
-        output.push(label);
-    }
+    let (s, label) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_label)(s), s);
 
     let (s, ops) = unwrap_or_return_illegal!(
-        opt::<_, _, E, _>(alt((parse_equ, parse_decl, parse_op)))(s),
-        output,
+        opt::<_, _, E, _>(alt((/* parse_equ,  */ parse_decl, parse_op)))(s),
         s
     );
-    if let Some(ops) = ops {
-        output.extend(ops);
-    }
 
-    let (s, comment) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_comment)(s), output, s);
-    if let Some(comment) = comment {
-        output.push(comment);
-    }
+    let (s, comment) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_comment)(s), s);
 
-    let (s, _) = unwrap_or_return_illegal!(tag::<_, _, E>("\n")(s), output, s);
+    let (s, _) = unwrap_or_return_illegal!(tag::<_, _, E>("\n")(s), s);
 
-    Ok((s, output))
+    let (instruction, operands) = ops.unzip();
+
+    Ok((
+        s,
+        RawTopLevel::Line {
+            label,
+            instruction,
+            operands,
+            comment,
+        },
+    ))
 }
 
 fn parse_all<'a, E: ParseError<Span<'a>>>(
     mut input: Span<'a>,
-) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
+) -> IResult<Span<'a>, Vec<RawTopLevel>, E> {
     let mut output = vec![];
     while !input.is_empty() {
-        let (rest, line) = alt((
-            terminated(take_whitespace, tag("\n")).map(|_| vec![]),
-            parse_directive,
-            parse_line,
-        ))(input)?;
+        if let Ok((rest, _)) = terminated::<_, _, _, E, _, _>(take_whitespace, tag("\n"))(input) {
+            input = rest;
+            continue;
+        }
+        let (rest, line) = alt((parse_directive, parse_line))(input)?;
         input = rest;
-        output.extend(line.into_iter());
+        output.push(line);
     }
 
     Ok((input, output))
 }
 
 // NOTE: this very much is *not* infallible
-pub fn parse(input: &str) -> Result<impl Iterator<Item = Token>, std::convert::Infallible> {
+pub fn parse(input: &str) -> Result<impl Iterator<Item = TopLevel>, std::convert::Infallible> {
     let span = Span::new(input);
     let (s, all) = parse_all::<ErrorTree<Span>>(span).expect("handle error");
-    assert_eq!(s.fragment(), &"", "todo: handle incomplete match");
+    assert_eq!(s.fragment(), &"", "TODO: handle incomplete match");
 
-    Ok(all.into_iter().map(|x| Token::from_raw(x, input)))
+    Ok(all.into_iter().map(|x| TopLevel::from_raw(x, input)))
 }
 
 #[cfg(test)]
@@ -961,7 +1012,7 @@ mod tests {
 
     use super::*;
     fn snapshot_lexing(input: &str) -> String {
-        let mut tokens = parse(input).unwrap().collect::<VecDeque<_>>();
+        let mut tokens = parse(input).unwrap().flatten().collect::<VecDeque<_>>();
 
         let mut output = String::new();
         // eprintln!("{tokens:?}");
