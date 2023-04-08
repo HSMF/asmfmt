@@ -32,6 +32,10 @@ pub enum RTokenTree<T> {
     Single {
         id: T,
     },
+    Annotated {
+        note: T,
+        actual: Box<RTokenTree<T>>,
+    },
     EffectiveAddress {
         brackets: (T, T),
         size: Option<T>,
@@ -46,8 +50,8 @@ pub(crate) fn single(id: RawToken) -> RTokenTree<RawToken> {
 
 pub(crate) type RawTopLevel<'a> = RTopLevel<RawToken<'a>>;
 pub(crate) type RawTokenTree<'a> = RTokenTree<RawToken<'a>>;
-pub(crate) type TopLevel<'a> = RTopLevel<Token<'a>>;
-pub(crate) type TokenTree<'a> = RTokenTree<Token<'a>>;
+pub type TopLevel<'a> = RTopLevel<Token<'a>>;
+pub type TokenTree<'a> = RTokenTree<Token<'a>>;
 
 impl<'a> TopLevel<'a> {
     pub(crate) fn from_raw(raw: RawTopLevel, input: &'a str) -> TopLevel<'a> {
@@ -189,16 +193,23 @@ impl<'a> Iterator for TokenTreeIter<'a> {
                 arg,
                 index,
             }) => {
-                if let Some(size) = size {
-                    self.stack.push(CloseParen(size))
-                }
                 self.stack.push(CloseParen(brackets.1));
                 if let Some(index) = index.map(|x| *x) {
                     self.stack.push(TT(index));
                 }
                 self.stack.push(TT(*arg));
 
-                Some(brackets.0)
+                if let Some(size) = size {
+                    self.stack.push(CloseParen(brackets.0));
+                    Some(size)
+                } else {
+                    Some(brackets.0)
+                }
+            }
+            TT(RTokenTree::Annotated { note, actual }) => {
+                dbg!(&note, &actual,);
+                self.stack.push(TT(*actual));
+                Some(note)
             }
         }
     }
@@ -231,6 +242,10 @@ impl<'a> TokenTree<'a> {
                 arg: Box::new(TokenTree::from_raw(*arg, input)),
                 index: index.map(|x| Box::new(TokenTree::from_raw(*x, input))),
                 size: size.map(map),
+            },
+            RTokenTree::Annotated { note, actual } => Self::Annotated {
+                note: map(note),
+                actual: Box::new(TokenTree::from_raw(*actual, input)),
             },
         }
     }

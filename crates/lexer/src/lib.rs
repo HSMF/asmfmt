@@ -694,23 +694,23 @@ fn parse_operands<'a, E: ParseError<Span<'a>>>(
             ))
             .map(|(_, x)| x)
             .map(single),
-            // TODO
-            // tuple((
-            //     opt(terminated(
-            //         size,
-            //         tuple((satisfy(is_space), take_whitespace)),
-            //     )),
-            //     parse_wordy(is_ident_start, is_ident, TokenKind::Ident),
-            // ))
-            // .map(|(a, b)| {
-            //     let mut out = vec![];
-            //     if let Some(a) = a {
-            //         out.push(RawToken::from_span(TokenKind::Size, a))
-            //     }
-            //     out.push(b);
-            //
-            //     out
-            // }),
+            tuple((
+                opt(terminated(
+                    size,
+                    tuple((satisfy(is_space), take_whitespace)),
+                )),
+                parse_wordy(is_ident_start, is_ident, TokenKind::Ident),
+            ))
+            .map(|(a, b)| {
+                if let Some(note) = a {
+                    RawTokenTree::Annotated {
+                        note: RawToken::from_span(TokenKind::Size, note),
+                        actual: Box::new(single(b)),
+                    }
+                } else {
+                    single(b)
+                }
+            }),
             parse_str.map(single),
         )),
     )(s)?;
@@ -728,17 +728,17 @@ fn parse_op<'a, E: ParseError<Span<'a>>>(
     Ok((s, (instr, operands)))
 }
 
-// TODO:
-// fn parse_equ<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Vec<RawToken<'a>>, E> {
-//     let (s, _) = take_whitespace(s)?;
-//
-//     let (s, equ) = tag_no_case("equ")(s)?;
-//     let (s, _) = take_whitespace(s)?;
-//     let (s, val) = parse_expr(s)?;
-//     let mut out = vec![RawToken::from_span(TokenKind::Equ, equ)];
-//     out.extend(val.into_iter());
-//     Ok((s, out))
-// }
+fn parse_equ<'a, E: ParseError<Span<'a>>>(
+    s: Span<'a>,
+) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawTokenTree<'a>>), E> {
+    let (s, _) = take_whitespace(s)?;
+
+    let (s, equ) = tag_no_case("equ")(s)?;
+    let (s, _) = take_whitespace(s)?;
+    let (s, val) = parse_expr(s)?;
+    let equ = RawToken::from_span(TokenKind::Equ, equ);
+    Ok((s, (equ, vec![val])))
+}
 
 fn parse_decl<'a, E: ParseError<Span<'a>>>(
     s: Span<'a>,
@@ -959,7 +959,7 @@ fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Raw
     let (s, label) = unwrap_or_return_illegal!(opt::<_, _, E, _>(parse_label)(s), s);
 
     let (s, ops) = unwrap_or_return_illegal!(
-        opt::<_, _, E, _>(alt((/* parse_equ,  */ parse_decl, parse_op)))(s),
+        opt::<_, _, E, _>(alt((parse_equ, parse_decl, parse_op)))(s),
         s
     );
 
