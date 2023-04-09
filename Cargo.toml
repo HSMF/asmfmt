@@ -2,10 +2,12 @@
 name = "asmfmt"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Conradin Laux <conradin.laux@gmail.com>"]
+description = "A Formatter for NASM-Style Assembly"
 
 [dependencies]
+asm-lexer = {path = "crates/lexer"}
+clap = { version = "4.2.1", features = ["derive"] }
 
 [workspace]
 members = ["crates/lexer", "crates/fmt"]
