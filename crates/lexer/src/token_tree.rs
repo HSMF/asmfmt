@@ -94,6 +94,101 @@ impl<'a> TopLevel<'a> {
         }
     }
 
+    pub fn comment<'b>(&'b self) -> &'b Option<Token<'a>> {
+        match self {
+            RTopLevel::Line { comment, .. } | RTopLevel::Directive { comment, .. } => comment,
+            RTopLevel::Illegal { .. } => &None,
+        }
+    }
+
+    /// computes the number of characters spanned by the item
+    pub fn width(&self) -> usize {
+        match self {
+            RTopLevel::Line {
+                label,
+                instruction,
+                operands,
+                comment,
+            } => {
+                if let Some(comment) = comment {
+                    return comment.col + comment.text.len();
+                }
+                if let Some(operands) = operands.as_ref().and_then(|x| x.iter().last()) {
+                    return operands.col() + operands.width();
+                }
+                if let Some(instr) = instruction {
+                    return instr.col + instr.text.len();
+                }
+                if let Some(label) = label {
+                    return label.col + label.text.len();
+                }
+                0
+            }
+            RTopLevel::Directive {
+                directive,
+                args,
+                brackets,
+                comment,
+            } => {
+                if let Some(comment) = comment {
+                    return comment.col + comment.text.len();
+                }
+
+                if let Some((_, r)) = brackets {
+                    return r.col + r.text.len();
+                }
+
+                if let Some(last) = args.iter().last() {
+                    return last.col + last.text.len();
+                }
+                directive.col + directive.text.len()
+            }
+            // todo how to handle illegal tokens
+            //RTopLevel::Illegal { remainder, .. } => remainder.col + remainder.text.len(),
+            RTopLevel::Illegal { .. } => 0,
+        }
+    }
+
+    pub fn width_no_comment(&self) -> usize {
+        match self {
+            RTopLevel::Line {
+                label,
+                instruction,
+                operands,
+                ..
+            } => {
+                if let Some(operands) = operands.as_ref().and_then(|x| x.iter().last()) {
+                    return operands.col() + operands.width();
+                }
+                if let Some(instr) = instruction {
+                    return instr.col + instr.text.len();
+                }
+                if let Some(label) = label {
+                    return label.col + label.text.len();
+                }
+                0
+            }
+            RTopLevel::Directive {
+                directive,
+                args,
+                brackets,
+                ..
+            } => {
+                if let Some((_, r)) = brackets {
+                    return r.col + r.text.len();
+                }
+
+                if let Some(last) = args.iter().last() {
+                    return last.col + last.text.len();
+                }
+                directive.col + directive.text.len()
+            }
+            // todo how to handle illegal tokens
+            //RTopLevel::Illegal { remainder, .. } => remainder.col + remainder.text.len(),
+            RTopLevel::Illegal { .. } => 0,
+        }
+    }
+
     pub(crate) fn from_raw(raw: RawTopLevel, input: &'a str) -> TopLevel<'a> {
         let map = move |x: RawToken| Token::from_raw(x, input);
         match raw {
@@ -275,6 +370,28 @@ impl<'a> TokenTree<'a> {
             RTokenTree::EffectiveAddress { brackets, .. } => brackets.0.col,
         }
     }
+
+    pub fn width(&self) -> usize {
+        let col = self.col();
+        match self {
+            RTokenTree::Expression {
+                parenthesis, args, ..
+            } => {
+                if let Some((_, r)) = parenthesis {
+                    return r.col + r.text.len() - col;
+                }
+
+                let last = &args[args.len() - 1];
+                last.col() + last.width() - col
+            }
+            RTokenTree::Single { id } => id.col + id.text.len() - col,
+            RTokenTree::Annotated { actual, .. } => actual.col() + actual.width() - col,
+            RTokenTree::EffectiveAddress { brackets, .. } => {
+                brackets.1.col + brackets.1.text.len() - col
+            }
+        }
+    }
+
     pub fn line(&self) -> u32 {
         match self {
             RTokenTree::Expression {
