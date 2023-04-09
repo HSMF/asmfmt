@@ -2,14 +2,25 @@
 * # A lexer for NASM-Style Assembly.
 *
 * ```
-* # use asm_lexer::{parse};
-* let input = "mov eax, ecx";
+* # use asm_lexer::Lexer;
+* let source = r#"
+* global main
+* main: mov eax, 15
+*       add eax, 200
+*       mov ecx, eax
+* "#;
 *
-* for token in parse(input).unwrap() {
-*   // do stuff
-*   // in case of failure, the token will contain
-*   // the rest of the line and continue normally
-* }
+* let mut lexer = Lexer::new(source);
+*
+* // a line is a NASM source line: `label:    instruction operands        ; comment`
+* assert!(lexer.next().expect("it has 1st line").is_directive(), "global main is a directive");
+* assert!(lexer.next().expect("it has 2nd line").is_line(),
+*   "`main: mov eax, 15`  is an instruction line");
+* assert!(lexer.next().expect("it has 3rd line").is_line(),
+*   "`      add eax, 200` is an instruction line");
+* assert!(lexer.next().expect("it has 4th line").is_line(),
+*   "`      mov ecx, eax` is an instruction line");
+* assert!(lexer.next().is_none(), "there are no more lines");
 * ```
 *
 * */
