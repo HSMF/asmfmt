@@ -413,6 +413,49 @@ impl<'a> TokenTree<'a> {
         }
     }
 
+    /// shifts the token tree by the given amount. A positive amount is to the right and a negative
+    /// amount is to the left. panics if there is no space on the left to shift
+    pub fn shift_by(&mut self, by: isize) {
+        let shift = |x: &mut usize| *x = x.checked_add_signed(by).unwrap();
+        match self {
+            RTokenTree::Expression {
+                operator,
+                parenthesis,
+                args,
+            } => {
+                shift(&mut operator.col);
+                if let Some((l, r)) = parenthesis {
+                    shift(&mut l.col);
+                    shift(&mut r.col);
+                }
+                for arg in args {
+                    arg.shift_by(by)
+                }
+            }
+            RTokenTree::Single { id } => shift(&mut id.col),
+            RTokenTree::Annotated { note, actual } => {
+                shift(&mut note.col);
+                actual.shift_by(by);
+            }
+            RTokenTree::EffectiveAddress {
+                brackets,
+                size,
+                arg,
+                index,
+            } => {
+                shift(&mut brackets.0.col);
+                shift(&mut brackets.1.col);
+                if let Some(size) = size {
+                    shift(&mut size.col);
+                }
+                arg.shift_by(by);
+                if let Some(idx) = index {
+                    idx.shift_by(by)
+                }
+            }
+        }
+    }
+
     pub(crate) fn from_raw(raw: RawTokenTree, input: &'a str) -> TokenTree<'a> {
         let map = move |x: RawToken| Token::from_raw(x, input);
         match raw {
