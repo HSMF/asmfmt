@@ -8,6 +8,13 @@ description = "A Formatter for NASM-Style Assembly"
 [dependencies]
 asm-lexer = {path = "crates/lexer"}
 clap = { version = "4.2.1", features = ["derive"] }
+fmt = {path = "crates/fmt"}
 
 [workspace]
 members = ["crates/lexer", "crates/fmt"]
+
+[profile.dev.package.insta]
+opt-level = 3
+
+[profile.dev.package.similar]
+opt-level = 3
