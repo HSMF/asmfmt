@@ -624,11 +624,29 @@ impl<'a> TokenTreeWriter<'a> {
     }
 }
 
-// TODO: make wrapper for TopLevel / TokenTree that contains high level span info?
-pub fn to_string(lines: &[TopLevel]) -> String {
+/// turns an iterator of [TopLevel] items into a string.
+///
+/// ```
+/// # use asm_lexer::{Lexer, to_string};
+/// let source = r#"
+/// global main
+/// main: mov eax, 15
+///       add eax, 200
+///       mov ecx, eax
+/// "#;
+/// // without any modifications to the token tree this just outputs the original
+/// // program
+/// assert_eq!(to_string(Lexer::new(source)), source);
+/// ```
+pub fn to_string<'a, I, T>(lines: I) -> String
+where
+    I: Iterator<Item = T>,
+    T: std::borrow::Borrow<TopLevel<'a>>,
+{
     let mut out = "".to_owned();
     let mut lnum = 1;
     for line in lines {
+        let line = line.borrow();
         let got_lnum = line.line();
         while lnum < got_lnum {
             out.push('\n');
@@ -653,7 +671,7 @@ mod tests {
             fn $name() {
                 let source = include_str!(concat!("../testdata/", stringify!($name), ".asm"));
                 let parsed = Lexer::new(source).collect::<Vec<_>>();
-                let reconstructed = to_string(&parsed);
+                let reconstructed = to_string(parsed.iter());
                 assert_eq!(source, &reconstructed);
             }
         };
