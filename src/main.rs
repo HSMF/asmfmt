@@ -9,12 +9,16 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 struct Arguments {
+    /// The file to format. If no FILE is provided or FILE is -, then input is taken from stdin
     #[clap(value_name = "FILE")]
     file: Option<PathBuf>,
 }
 
+// TODO: read config from a config file
+
 fn main() {
     let Arguments { file } = Arguments::parse();
+    let file = file.and_then(|x| (x != PathBuf::from("-")).then_some(x));
     let content = if let Some(file) = &file {
         std::fs::read_to_string(file).expect("file did not exist")
     } else {
@@ -28,8 +32,13 @@ fn main() {
     };
     let parsed = Lexer::new(&content);
 
-    // todo: format stream
+    // == apply local rules ==
 
-    let output = asm_lexer::to_string(parsed);
+    // == apply global rules ==
+    let mut buffered = parsed.collect::<Vec<_>>();
+    // align comments
+    fmt::align_comments(&mut buffered, false);
+
+    let output = asm_lexer::to_string(buffered.iter());
     println!("{output}");
 }
