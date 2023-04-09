@@ -33,7 +33,7 @@ use token_tree::{RawTokenTree, RawTopLevel};
 use crate::token_tree::single;
 
 mod token_tree;
-pub use token_tree::{TokenTree, TopLevel};
+pub use token_tree::{to_string, TokenTree, TopLevel};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The base of a number.

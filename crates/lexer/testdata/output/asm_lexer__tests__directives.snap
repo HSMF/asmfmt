@@ -33,9 +33,8 @@ expression: snapshot
                           ^^^^^^^^^^^^^^^^^^^^^^^ Comment : (6/27) " address of ctrl string"
 main:
 ^^^^ Label : (7/1) "main"
-    
+
     int 0x80
     ^^^ Instruction : (9/5) "int"
           ^^ Number(Hexadecimal) : (9/11) "80"
-
 

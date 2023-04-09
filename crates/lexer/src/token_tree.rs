@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt::Display};
 
-use crate::{RawToken, Token};
+use crate::{RawToken, Token, TokenKind};
 
 #[derive(Debug)]
 pub enum RTopLevel<T> {
@@ -66,6 +66,34 @@ pub type TopLevel<'a> = RTopLevel<Token<'a>>;
 pub type TokenTree<'a> = RTokenTree<Token<'a>>;
 
 impl<'a> TopLevel<'a> {
+    pub fn line(&self) -> u32 {
+        match self {
+            RTopLevel::Line {
+                label,
+                instruction,
+                operands,
+                comment,
+            } => {
+                if let Some(label) = label {
+                    return label.line;
+                }
+                if let Some(instr) = instruction {
+                    return instr.line;
+                }
+                if let Some(comment) = comment {
+                    return comment.line;
+                }
+                if let Some(first) = operands.as_ref().and_then(|x| x.get(0)) {
+                    return first.line();
+                }
+
+                unreachable!("there is an empty TopLevel::Line. This cannot happen");
+            }
+            RTopLevel::Directive { directive, .. } => directive.line,
+            RTopLevel::Illegal { remainder, .. } => remainder.line,
+        }
+    }
+
     pub(crate) fn from_raw(raw: RawTopLevel, input: &'a str) -> TopLevel<'a> {
         let map = move |x: RawToken| Token::from_raw(x, input);
         match raw {
@@ -219,7 +247,6 @@ impl<'a> Iterator for TokenTreeIter<'a> {
                 }
             }
             TT(RTokenTree::Annotated { note, actual }) => {
-                dbg!(&note, &actual,);
                 self.stack.push(TT(*actual));
                 Some(note)
             }
@@ -228,6 +255,47 @@ impl<'a> Iterator for TokenTreeIter<'a> {
 }
 
 impl<'a> TokenTree<'a> {
+    pub fn col(&self) -> usize {
+        match self {
+            RTokenTree::Expression {
+                operator,
+                parenthesis,
+                args,
+            } => {
+                if let Some((l, _)) = parenthesis {
+                    return l.col;
+                }
+                if args.len() <= 1 {
+                    return operator.col;
+                }
+                args[0].col()
+            }
+            RTokenTree::Single { id } => id.col,
+            RTokenTree::Annotated { note, .. } => note.col,
+            RTokenTree::EffectiveAddress { brackets, .. } => brackets.0.col,
+        }
+    }
+    pub fn line(&self) -> u32 {
+        match self {
+            RTokenTree::Expression {
+                operator,
+                parenthesis,
+                args,
+            } => {
+                if let Some((l, _)) = parenthesis {
+                    return l.line;
+                }
+                if args.len() <= 1 {
+                    return operator.line;
+                }
+                args[0].line()
+            }
+            RTokenTree::Single { id } => id.line,
+            RTokenTree::Annotated { note, .. } => note.line,
+            RTokenTree::EffectiveAddress { brackets, .. } => brackets.0.line,
+        }
+    }
+
     pub(crate) fn from_raw(raw: RawTokenTree, input: &'a str) -> TokenTree<'a> {
         let map = move |x: RawToken| Token::from_raw(x, input);
         match raw {
@@ -360,4 +428,247 @@ impl<'a> Iterator for TopLevelIter<'a> {
             }
         }
     }
+}
+
+fn align_to(target: usize, col: &mut usize, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    write!(f, "{}", " ".repeat(target - *col))?;
+    *col = target;
+    Ok(())
+}
+fn write_token(
+    token: &Token<'_>,
+    col: &mut usize,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    match token.kind {
+        TokenKind::String => {
+            align_to(token.col - 1, col, f)?;
+            write!(f, "\"{}\"", token.text)?;
+            *col = token.col + token.text.len() + 1;
+        }
+        TokenKind::Number(crate::Base::Hexadecimal) => {
+            align_to(token.col - 2, col, f)?;
+            write!(f, "0x{}", token.text)?;
+            *col = token.col + token.text.len();
+        }
+        _ => {
+            align_to(token.col, col, f)?;
+            write!(f, "{}", token.text)?;
+            *col = token.col + token.text.len();
+        }
+    }
+
+    Ok(())
+}
+
+impl Display for TopLevel<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RTopLevel::Line {
+                label,
+                instruction,
+                operands,
+                comment,
+            } => {
+                let mut col = 1;
+                if let Some(label) = label {
+                    write_token(label, &mut col, f)?;
+                    write!(f, ":")?;
+                    col += 1;
+                }
+                if let Some(instruction) = instruction {
+                    write_token(instruction, &mut col, f)?;
+                }
+                if let Some(operands) = operands {
+                    let mut first = true;
+                    for op in operands {
+                        if !first {
+                            write!(f, ",")?;
+                            col += 1;
+                        }
+                        first = false;
+                        TokenTreeWriter::new(op, &mut col).write(f)?;
+                    }
+                }
+                if let Some(comment) = comment {
+                    align_to(comment.col - 1, &mut col, f)?;
+                    write!(f, ";")?;
+                    col += 1;
+                    write_token(comment, &mut col, f)?;
+                }
+                Ok(())
+            }
+
+            RTopLevel::Directive {
+                directive,
+                args,
+                brackets,
+                comment,
+            } => {
+                let mut col = 1;
+                let (l, r) = if let Some((l, r)) = brackets {
+                    (Some(l), Some(r))
+                } else {
+                    (None, None)
+                };
+                if let Some(l) = l {
+                    write_token(l, &mut col, f)?;
+                }
+
+                write_token(directive, &mut col, f)?;
+
+                let mut first = true;
+                for arg in args {
+                    if !first {
+                        write!(f, ",")?;
+                        col += 1;
+                    }
+                    first = false;
+                    write_token(arg, &mut col, f)?;
+                }
+
+                if let Some(r) = r {
+                    write_token(r, &mut col, f)?;
+                }
+
+                if let Some(comment) = comment {
+                    align_to(comment.col - 1, &mut col, f)?;
+                    write!(f, ";")?;
+                    col += 1;
+                    write_token(comment, &mut col, f)?;
+                }
+
+                Ok(())
+            }
+            RTopLevel::Illegal { tokens, remainder } => {
+                let mut col = 1;
+                for tok in tokens {
+                    write_token(tok, &mut col, f)?;
+                }
+                write_token(remainder, &mut col, f)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+struct TokenTreeWriter<'a> {
+    tt: &'a TokenTree<'a>,
+    col: &'a mut usize,
+}
+
+impl<'a> TokenTreeWriter<'a> {
+    fn new(tt: &'a TokenTree<'a>, col: &'a mut usize) -> Self {
+        Self { tt, col }
+    }
+
+    fn write(&mut self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.tt {
+            RTokenTree::Expression {
+                operator,
+                parenthesis,
+                args,
+            } => {
+                let (left, right) = if let Some((l, r)) = parenthesis {
+                    (Some(l), Some(r))
+                } else {
+                    (None, None)
+                };
+
+                if args.len() <= 1 {
+                    write_token(operator, self.col, f)?;
+                    TokenTreeWriter::new(&args[0], self.col).write(f)?;
+                } else {
+                    debug_assert_eq!(args.len(), 2);
+                    TokenTreeWriter::new(&args[0], self.col).write(f)?;
+                    write_token(operator, self.col, f)?;
+                    TokenTreeWriter::new(&args[1], self.col).write(f)?;
+                }
+
+                if let Some(l) = left {
+                    write_token(l, self.col, f)?;
+                }
+                if let Some(r) = right {
+                    write_token(r, self.col, f)?;
+                }
+            }
+            RTokenTree::Single { id } => {
+                write_token(id, self.col, f)?;
+            }
+            RTokenTree::Annotated { note, actual } => {
+                write_token(note, self.col, f)?;
+                TokenTreeWriter::new(actual, self.col).write(f)?;
+            }
+            RTokenTree::EffectiveAddress {
+                brackets,
+                size,
+                arg,
+                index,
+            } => {
+                // align_to(self.tt.col(), self.col, f)?;
+                if let Some(size) = size {
+                    write_token(size, self.col, f)?;
+                }
+                let (left, right) = brackets;
+                write_token(left, self.col, f)?;
+                TokenTreeWriter::new(arg, self.col).write(f)?;
+                if let Some(index) = index {
+                    write!(f, ",")?;
+                    TokenTreeWriter::new(index, self.col).write(f)?;
+                }
+                write_token(right, self.col, f)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// TODO: make wrapper for TopLevel / TokenTree that contains high level span info?
+pub fn to_string(lines: &[TopLevel]) -> String {
+    let mut out = "".to_owned();
+    let mut lnum = 1;
+    for line in lines {
+        let got_lnum = line.line();
+        while lnum < got_lnum {
+            out.push('\n');
+            lnum += 1;
+        }
+        out += &line.to_string();
+        out.push('\n');
+        lnum += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Lexer;
+    use pretty_assertions::assert_eq;
+
+    macro_rules! check_id {
+        ($name:ident) => {
+            #[test]
+            fn $name() {
+                let source = include_str!(concat!("../testdata/", stringify!($name), ".asm"));
+                let parsed = Lexer::new(source).collect::<Vec<_>>();
+                let reconstructed = to_string(&parsed);
+                assert_eq!(source, &reconstructed);
+            }
+        };
+        ($name:ident, $path:literal) => {
+            #[test]
+            fn $name() {
+                let source = include_str!($path);
+                let parsed = Lexer::new(source).collect();
+                let reconstructed = reconstruct(parsed);
+                assert_eq!(source, &reconstructed);
+            }
+        };
+    }
+
+    check_id!(hm);
+    check_id!(printf1);
+    check_id!(directives);
 }

@@ -5,6 +5,5 @@
     push    dword [a]    ; value of variable a
     push    dword fmt    ; address of ctrl string
 main:
-    
-    int 0x80
 
+    int 0x80
