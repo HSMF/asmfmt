@@ -39,6 +39,7 @@ fn main() {
     // == apply global rules ==
     let mut buffered = parsed.collect::<Vec<_>>();
     // align comments
+    fmt::align_operands(&mut buffered);
     fmt::align_comments(&mut buffered, false);
 
     let output = asm_lexer::to_string(buffered.iter());
