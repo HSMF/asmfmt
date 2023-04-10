@@ -228,8 +228,18 @@ impl<'a> TopLevel<'a> {
     /// maps a top level item to some type `T`, according to the arguments
     pub fn map<L, D, I, T>(self, map_line: L, map_directive: D, map_illegal: I) -> T
     where
-        L: FnOnce(Option<Token<'a>>, Option<Token<'a>>, Option<Vec<TokenTree<'a>>>, Option<Token<'a>>) -> T,
-        D: FnOnce(Token<'a>, Vec<Token<'a>>, Option<(Token<'a>, Token<'a>)>, Option<Token<'a>>) -> T,
+        L: FnOnce(
+            Option<Token<'a>>,
+            Option<Token<'a>>,
+            Option<Vec<TokenTree<'a>>>,
+            Option<Token<'a>>,
+        ) -> T,
+        D: FnOnce(
+            Token<'a>,
+            Vec<Token<'a>>,
+            Option<(Token<'a>, Token<'a>)>,
+            Option<Token<'a>>,
+        ) -> T,
         I: FnOnce(Vec<Token<'a>>, Token<'a>) -> T,
     {
         match self {
@@ -391,7 +401,13 @@ impl<'a> TokenTree<'a> {
             }
             RTokenTree::Single { id } => id.col,
             RTokenTree::Annotated { note, .. } => note.col,
-            RTokenTree::EffectiveAddress { brackets, .. } => brackets.0.col,
+            RTokenTree::EffectiveAddress { brackets, size, .. } => {
+                if let Some(size) = size {
+                    size.col
+                } else {
+                    brackets.0.col
+                }
+            }
         }
     }
 
