@@ -20,10 +20,6 @@ fn comment_pos(lines: &[TopLevel]) -> usize {
     max
 }
 
-fn has_label(t: &TopLevel) -> bool {
-    matches!(t, TopLevel::Line { label: Some(_), .. })
-}
-
 fn is_only_comment(t: &TopLevel) -> bool {
     match t {
         TopLevel::Line {
@@ -65,9 +61,101 @@ pub fn align_comments(lines: &mut [TopLevel], shift_only_comments: bool) {
 /// Aligns the operands in `lines` under each label
 /// calculates the best position to put the operand given
 /// by the length of the instructions. After a new label, resets.
-pub fn align_operands(_lines: &mut [TopLevel]) {
+pub fn align_operands(lines: &mut [TopLevel]) {
     let mut index = 0;
-    todo!()
+
+    fn has_label(t: &TopLevel) -> bool {
+        match t {
+            TopLevel::Line {
+                label: Some(label), ..
+            } => !label.text.starts_with('.'),
+            _ => false,
+        }
+    }
+
+    fn label_end(t: &TopLevel) -> usize {
+        match t {
+            TopLevel::Line {
+                label: Some(label), ..
+            } => label.col + label.text.len(),
+            _ => 0,
+        }
+    }
+
+    fn diff_signed(a: usize, b: usize) -> isize {
+        if a >= b {
+            (a - b) as isize
+        } else {
+            -((b - a) as isize)
+        }
+    }
+
+    while index < lines.len() {
+        let next_with_label = lines
+            .iter()
+            .enumerate()
+            .skip(index)
+            .find(|(_, line)| has_label(line))
+            .map(|(i, _)| i)
+            .unwrap_or(lines.len());
+        let shifty_col = lines[index.saturating_sub(1)..next_with_label]
+            .iter()
+            .map(label_end)
+            .max()
+            .unwrap_or(0);
+
+        for line in &mut lines[index..next_with_label] {
+            match line {
+                TopLevel::Line {
+                    label: _,
+                    instruction: Some(instr),
+                    operands,
+                    comment,
+                } => {
+                    let shift_by = diff_signed(shifty_col, instr.col);
+                    instr.col = shifty_col;
+                    let mut last_col = shifty_col + instr.text.len();
+
+                    for i in operands.iter_mut().flatten() {
+                        i.shift_by(shift_by);
+                    }
+                    if let Some(last) = operands.iter().flatten().last() {
+                        last_col = last.col() + last.width();
+                    }
+                    if let Some(comment) = comment {
+                        if comment.col <= last_col {
+                            comment.col = comment.col.wrapping_add_signed(shift_by);
+                        }
+                    }
+                }
+                TopLevel::Line {
+                    label: _,
+                    instruction: _,
+                    operands: Some(ops),
+                    comment,
+                } if ops.get(0).map(|x| x.col() < shifty_col) == Some(true) => {
+                    let shift_by = diff_signed(shifty_col, ops[0].col());
+
+                    for i in ops.iter_mut() {
+                        i.shift_by(shift_by)
+                    }
+                    let last_col = if let Some(last) = ops.iter().last() {
+                        last.col() + last.width()
+                    } else {
+                        0
+                    };
+                    if let Some(comment) = comment {
+                        if comment.col <= last_col {
+                            comment.col = comment.col.wrapping_add_signed(shift_by);
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+
+        index = next_with_label + 1;
+    }
 }
 
 pub struct FixCase<I> {
@@ -170,7 +258,16 @@ mod tests {
         };
     }
 
-    snap_global!(align_comments_basic, "../testdata/basic.asm", |l| align_comments(l, false));
-    snap_global!(align_comments_printf1, "../testdata/printf1.asm", |l| align_comments(l, false));
+    snap_global!(align_comments_basic, "../testdata/basic.asm", |l| {
+        align_comments(l, false)
+    });
+    snap_global!(align_comments_printf1, "../testdata/printf1.asm", |l| {
+        align_comments(l, false)
+    });
+    snap_global!(
+        align_labels_printf2,
+        "../testdata/printf2.asm",
+        align_operands
+    );
     snap_local!(fix_case_printf1, "../testdata/printf1.asm", FixCase::new);
 }
