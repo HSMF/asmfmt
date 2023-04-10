@@ -130,14 +130,17 @@ mod tests {
         to_string(lines.iter())
     }
 
-    macro_rules! snap {
-        ($name:ident, $rule:expr) => {
-            snap!(
-                $name,
-                concat!("../testdata/", stringify!($name), ".asm"),
-                $rule
-            );
-        };
+    fn apply_local_fmt<'a, F, B>(s: &'a str, f: F) -> String
+    where
+        B: Iterator<Item = TopLevel<'a>>,
+        F: FnOnce(Lexer<'a>) -> B,
+    {
+        let lexer = Lexer::new(s);
+        let lines = f(lexer);
+        to_string(lines)
+    }
+
+    macro_rules! snap_global {
         ($name:ident, $path:expr, $rule:expr) => {
             #[test]
             fn $name() {
@@ -152,6 +155,22 @@ mod tests {
         };
     }
 
-    snap!(basic, |l| align_comments(l, false));
-    snap!(printf1, |l| align_comments(l, false));
+    macro_rules! snap_local {
+        ($name:ident, $path:expr, $cons:expr) => {
+            #[test]
+            fn $name() {
+                let contents = include_str!($path);
+                let snapshot = apply_local_fmt(contents, $cons);
+                let mut settings = insta::Settings::clone_current();
+                settings.set_snapshot_path("../testdata/output/");
+                settings.bind(|| {
+                    insta::assert_snapshot!(snapshot);
+                });
+            }
+        };
+    }
+
+    snap_global!(align_comments_basic, "../testdata/basic.asm", |l| align_comments(l, false));
+    snap_global!(align_comments_printf1, "../testdata/printf1.asm", |l| align_comments(l, false));
+    snap_local!(fix_case_printf1, "../testdata/printf1.asm", FixCase::new);
 }
