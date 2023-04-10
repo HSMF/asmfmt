@@ -58,10 +58,29 @@ pub fn align_comments(lines: &mut [TopLevel], shift_only_comments: bool) {
     }
 }
 
+#[derive(Debug)]
+pub struct AlignOperandsOpt {
+    /// how far away the 'instruction column' should appear from the 'label column', in spaces
+    pub min_spaces_after_label: u8,
+    /// how far away the 'operands column' should appear from the 'instruction column', in spaces
+    pub min_spaces_after_instr: u8,
+}
+
+impl Default for AlignOperandsOpt {
+    fn default() -> Self {
+        Self {
+            min_spaces_after_label: 1,
+            min_spaces_after_instr: 4,
+        }
+    }
+}
+
 /// Aligns the operands in `lines` under each label
 /// calculates the best position to put the operand given
 /// by the length of the instructions. After a new label, resets.
-pub fn align_operands(lines: &mut [TopLevel]) {
+/// Local labels (labels starting with a .) do not reset the
+/// shift amount
+pub fn align_operands(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
     let mut index = 0;
 
     fn has_label(t: &TopLevel) -> bool {
@@ -78,6 +97,16 @@ pub fn align_operands(lines: &mut [TopLevel]) {
             TopLevel::Line {
                 label: Some(label), ..
             } => label.col + label.text.len(),
+            _ => 0,
+        }
+    }
+
+    fn instr_end(t: &TopLevel) -> usize {
+        match t {
+            TopLevel::Line {
+                instruction: Some(instr),
+                ..
+            } => instr.col + instr.text.len(),
             _ => 0,
         }
     }
@@ -102,7 +131,9 @@ pub fn align_operands(lines: &mut [TopLevel]) {
             .iter()
             .map(label_end)
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            + 1 // the ':' after the label
+            + opts.min_spaces_after_label as usize;
 
         for line in &mut lines[index..next_with_label] {
             match line {
@@ -151,6 +182,42 @@ pub fn align_operands(lines: &mut [TopLevel]) {
                     }
                 }
                 _ => (),
+            }
+        }
+
+        // do the same but for operands
+        let shifty_col = lines[index.saturating_sub(1)..next_with_label]
+            .iter()
+            .map(instr_end)
+            .max()
+            .unwrap_or(0)
+            + opts.min_spaces_after_instr as usize;
+
+        for line in &mut lines[index..next_with_label] {
+            match line {
+                TopLevel::Line {
+                    label: _,
+                    instruction: _,
+                    operands: Some(ops),
+                    comment,
+                } if !ops.is_empty() => {
+                    let shift_by = diff_signed(shifty_col, ops[0].col());
+
+                    for i in ops.iter_mut() {
+                        i.shift_by(shift_by)
+                    }
+                    let last_col = if let Some(last) = ops.iter().last() {
+                        last.col() + last.width()
+                    } else {
+                        0
+                    };
+                    if let Some(comment) = comment {
+                        if comment.col <= last_col {
+                            comment.col = comment.col.wrapping_add_signed(shift_by);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -264,10 +331,8 @@ mod tests {
     snap_global!(align_comments_printf1, "../testdata/printf1.asm", |l| {
         align_comments(l, false)
     });
-    snap_global!(
-        align_labels_printf2,
-        "../testdata/printf2.asm",
-        align_operands
-    );
+    snap_global!(align_labels_printf2, "../testdata/printf2.asm", |l| {
+        align_operands(l, Default::default())
+    });
     snap_local!(fix_case_printf1, "../testdata/printf1.asm", FixCase::new);
 }

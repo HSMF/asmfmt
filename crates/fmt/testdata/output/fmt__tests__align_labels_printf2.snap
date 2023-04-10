@@ -27,23 +27,23 @@ flttmp:    resq 1                    ; 64-bit temporary for printing flt1
       global    main                ; "C" main program 
 main:                        ; label, start of main program
 
-    fld    dword [flt1]          ; need to convert 32-bit to 64-bit
-    fstp    qword [flttmp]          ; floating load makes 80-bit,
+      fld     dword [flt1]       ; need to convert 32-bit to 64-bit
+      fstp    qword [flttmp]        ; floating load makes 80-bit,
                                     ; store as 64-bit
                                     ; push last argument first
-    push    dword [flt2+4]           ; 64 bit floating point (bottom)
-    push    dword [flt2]           ; 64 bit floating point (top)
-    push    dword [flttmp+4]      ; 64 bit floating point (bottom)
-    push    dword [flttmp]            ; 64 bit floating point (top)
-    push    dword [hex1]            ; hex constant
-    push    dword [inta1]          ; integer data pass by value
-    push    dword len            ; constant pass by value
-    push    dword str1       ; "string" pass by reference 
-    push    dword [char1]            ; 'a'
-    push    dword msg            ; address of format string
-    call    printf                ; Call C function
-    add     esp, 40                ; pop stack 10*4 bytes
+      push    dword [flt2+4]         ; 64 bit floating point (bottom)
+      push    dword [flt2]         ; 64 bit floating point (top)
+      push    dword [flttmp+4]    ; 64 bit floating point (bottom)
+      push    dword [flttmp]          ; 64 bit floating point (top)
+      push    dword [hex1]          ; hex constant
+      push    dword [inta1]        ; integer data pass by value
+      push    dword len          ; constant pass by value
+      push    dword str1     ; "string" pass by reference 
+      push    dword [char1]          ; 'a'
+      push    dword msg          ; address of format string
+      call    printf              ; Call C function
+      add     esp, 40              ; pop stack 10*4 bytes
 
-    mov     eax, 0                ; exit code, 0=normal
-    ret                    ; main returns to operating system
+      mov     eax, 0              ; exit code, 0=normal
+      ret                  ; main returns to operating system
 
