@@ -4,9 +4,10 @@ Formatter for NASM-Style Assembly
 
 ## Installation
 
-You need to have a more or less current rust toolchain.
+You need to have a more or less current rust toolchain. Run the following commands in your shell:
 
 ```bash
+git clone https://github.com/HSMF/asmfmt; cd asmfmt
 cargo install --path .
 ```
 
