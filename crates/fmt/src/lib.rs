@@ -1,6 +1,8 @@
 #![doc = include_str!("../README.md")]
 
-use asm_lexer::TopLevel;
+use std::borrow::Cow;
+
+use asm_lexer::{Token, TopLevel};
 
 fn comment_pos(lines: &[TopLevel]) -> usize {
     let mut max = 0;
@@ -16,6 +18,10 @@ fn comment_pos(lines: &[TopLevel]) -> usize {
     }
 
     max
+}
+
+fn has_label(t: &TopLevel) -> bool {
+    matches!(t, TopLevel::Line { label: Some(_), .. })
 }
 
 fn is_only_comment(t: &TopLevel) -> bool {
@@ -53,6 +59,61 @@ pub fn align_comments(lines: &mut [TopLevel], shift_only_comments: bool) {
             }
             TopLevel::Illegal { .. } => {}
         }
+    }
+}
+
+/// Aligns the operands in `lines` under each label
+/// calculates the best position to put the operand given
+/// by the length of the instructions. After a new label, resets.
+pub fn align_operands(_lines: &mut [TopLevel]) {
+    let mut index = 0;
+    todo!()
+}
+
+pub struct FixCase<I> {
+    iter: I,
+}
+
+impl<I> FixCase<I> {
+    pub fn new<'a>(iter: I) -> Self
+    where
+        I: Iterator<Item = TopLevel<'a>>,
+    {
+        Self { iter }
+    }
+}
+
+impl<'a, I> Iterator for FixCase<I>
+where
+    I: Iterator<Item = TopLevel<'a>>,
+{
+    type Item = TopLevel<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        fn fixup(tok: Token) -> Token {
+            Token {
+                text: Cow::Owned(tok.text.to_lowercase()),
+                ..tok
+            }
+        }
+        fn ofixup(tok: Option<Token>) -> Option<Token> {
+            tok.map(fixup)
+        }
+        let out: Self::Item = self.iter.next()?.map(
+            |label, instruction, operands, comment| TopLevel::Line {
+                label: ofixup(label),
+                instruction: ofixup(instruction),
+                operands,
+                comment,
+            },
+            |directive, args, brackets, comment| TopLevel::Directive {
+                directive: fixup(directive),
+                args,
+                brackets,
+                comment,
+            },
+            |tokens, remainder| TopLevel::Illegal { tokens, remainder },
+        );
+        Some(out)
     }
 }
 

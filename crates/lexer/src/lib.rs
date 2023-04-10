@@ -25,6 +25,8 @@
 *
 * */
 
+use std::borrow::Cow;
+
 use nom::{
     branch::alt,
     bytes::complete::{
@@ -163,7 +165,7 @@ pub struct Token<'a> {
     pub kind: TokenKind,
     pub line: u32,
     pub col: usize,
-    pub text: &'a str,
+    pub text: Cow<'a, str>,
 }
 
 impl<'a> Token<'a> {
@@ -172,7 +174,7 @@ impl<'a> Token<'a> {
             kind: raw.kind,
             line: raw.pos.location_line(),
             col: raw.pos.get_utf8_column(),
-            text: &input[raw.pos.location_offset()..raw.pos.location_offset() + raw.length],
+            text: Cow::Borrowed(&input[raw.pos.location_offset()..raw.pos.location_offset() + raw.length]),
         }
     }
 }
@@ -1159,7 +1161,7 @@ mod tests {
                     kind: crate::TokenKind::Label,
                     line,
                     col,
-                    text,
+                    text: Cow::Borrowed(text),
                 }
             }
             fn prs(s: &str) -> IResult<Span, RawToken, ErrorTree<Span>> {

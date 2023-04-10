@@ -224,6 +224,30 @@ impl<'a> TopLevel<'a> {
             },
         }
     }
+
+    /// maps a top level item to some type `T`, according to the arguments
+    pub fn map<L, D, I, T>(self, map_line: L, map_directive: D, map_illegal: I) -> T
+    where
+        L: FnOnce(Option<Token<'a>>, Option<Token<'a>>, Option<Vec<TokenTree<'a>>>, Option<Token<'a>>) -> T,
+        D: FnOnce(Token<'a>, Vec<Token<'a>>, Option<(Token<'a>, Token<'a>)>, Option<Token<'a>>) -> T,
+        I: FnOnce(Vec<Token<'a>>, Token<'a>) -> T,
+    {
+        match self {
+            RTopLevel::Line {
+                label,
+                instruction,
+                operands,
+                comment,
+            } => map_line(label, instruction, operands, comment),
+            RTopLevel::Directive {
+                directive,
+                args,
+                brackets,
+                comment,
+            } => map_directive(directive, args, brackets, comment),
+            RTopLevel::Illegal { tokens, remainder } => map_illegal(tokens, remainder),
+        }
+    }
 }
 
 enum StackVal<'a> {
