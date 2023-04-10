@@ -24,3 +24,35 @@ st:
     ret
 > asmfmt program.asm # formats program.asm
 ```
+
+## In Editors
+
+### Neovim
+
+The recommended way of including asmfmt in Neovim is by using [null-ls](https://github.com/jose-elias-alvarez/null-ls.nvim)
+
+```lua
+local asmfmt = {
+    method = require("null-ls").methods.FORMATTING,
+    filetypes = { "asm" },
+    generator = null_ls.formatter({
+        command = "asmfmt",
+        to_stdin = true,
+    }),
+}
+
+require("null-ls").setup({
+    sources = {
+        asmfmt,
+        -- other sources...
+    }
+})
+```
+
+### VSCode
+
+Use [this extension](./asmfmt-vsc/)
+
+### Others
+
+- if your editor is not supported and you know how to support it, please submit a PR. Thanks!
