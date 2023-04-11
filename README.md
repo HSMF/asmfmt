@@ -2,6 +2,11 @@
 
 Formatter for NASM-Style Assembly
 
+## Features
+
+![before image](assets/before.png)
+![after image](assets/after.png)
+
 ## Installation
 
 You need to have a more or less current rust toolchain. Run the following commands in your shell:
