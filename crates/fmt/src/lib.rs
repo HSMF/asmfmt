@@ -75,6 +75,14 @@ impl Default for AlignOperandsOpt {
     }
 }
 
+fn diff_signed(a: usize, b: usize) -> isize {
+    if a >= b {
+        (a - b) as isize
+    } else {
+        -((b - a) as isize)
+    }
+}
+
 /// Aligns the operands in `lines` under each label
 /// calculates the best position to put the operand given
 /// by the length of the instructions. After a new label, resets.
@@ -108,14 +116,6 @@ pub fn align_operands(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
                 ..
             } => instr.col + instr.text.len(),
             _ => 0,
-        }
-    }
-
-    fn diff_signed(a: usize, b: usize) -> isize {
-        if a >= b {
-            (a - b) as isize
-        } else {
-            -((b - a) as isize)
         }
     }
 
@@ -314,6 +314,85 @@ where
     }
 }
 
+/// Indents directives by `indent_by` spaces (by default 4).
+/// Furthermore improves the spacing between directive and operands of that directive
+///
+/// Moves comments out of the way if needed, but do not use this to prettify comments
+pub struct IndentDirectives<I> {
+    iter: I,
+    indent_by: usize,
+}
+
+impl<'a, I> IndentDirectives<I>
+where
+    I: Iterator<Item = TopLevel<'a>>,
+{
+    pub fn new(iter: I) -> Self {
+        Self { iter, indent_by: 4 }
+    }
+
+    pub fn set_indent(mut self, indent_by: usize) -> Self {
+        self.indent_by = indent_by;
+        self
+    }
+}
+
+impl<'a, I> Iterator for IndentDirectives<I>
+where
+    I: Iterator<Item = TopLevel<'a>>,
+{
+    type Item = TopLevel<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(match self.iter.next()? {
+            TopLevel::Directive {
+                mut directive,
+                mut args,
+                brackets,
+                mut comment,
+            } => {
+                fn shift_tok(pos: &mut usize, tok: &mut Token) {
+                    tok.col = *pos;
+                    *pos += tok.text.len();
+                }
+                let (mut l, mut r) = brackets.unzip();
+                let mut pos = self.indent_by;
+                if let Some(l) = &mut l {
+                    shift_tok(&mut pos, l);
+                }
+                shift_tok(&mut pos, &mut directive);
+                let mut first = true;
+                for arg in args.iter_mut() {
+                    if first {
+                        pos += 1; // space
+                        first = false;
+                    } else {
+                        pos += 2; // comma and space
+                    }
+                    shift_tok(&mut pos, arg);
+                }
+                if let Some(r) = &mut r {
+                    shift_tok(&mut pos, r);
+                }
+
+                if let Some(comment) = &mut comment {
+                    pos += 2;
+                    if comment.col < pos {
+                        shift_tok(&mut pos, comment);
+                    }
+                }
+
+                TopLevel::Directive {
+                    directive,
+                    args,
+                    brackets: l.zip(r),
+                    comment,
+                }
+            }
+            x => x,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use asm_lexer::{to_string, Lexer};
@@ -378,4 +457,9 @@ mod tests {
     });
     snap_local!(fix_case_printf1, "../testdata/printf1.asm", FixCase::new);
     snap_local!(fix_case_printf2, "../testdata/printf2.asm", FixCase::new);
+    snap_local!(
+        indent_dir_directives,
+        "../testdata/directives.asm",
+        IndentDirectives::new
+    );
 }

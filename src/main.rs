@@ -5,7 +5,7 @@ use std::{
 
 use asm_lexer::Lexer;
 use clap::Parser;
-use fmt::FixCase;
+use fmt::{FixCase, IndentDirectives};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
@@ -35,6 +35,7 @@ fn main() {
 
     // == apply local rules ==
     let parsed = FixCase::new(parsed);
+    let parsed = IndentDirectives::new(parsed);
 
     // == apply global rules ==
     let mut buffered = parsed.collect::<Vec<_>>();
