@@ -56,6 +56,172 @@ pub enum RTokenTree<T> {
     },
 }
 
+impl<T> RTokenTree<T> {
+    /// applies the function F to every leaf of the token tree. Returns a newly constructed
+    /// TokenTree.
+    pub fn map_leaves<F, S>(self, mut f: F) -> RTokenTree<S>
+    where
+        F: FnMut(T) -> S,
+    {
+        /// A Partially initialized version of a RTokenTree<T>
+        enum Kind<T> {
+            Expression {
+                parenthesis: Option<(T, T)>,
+                operator: T,
+                args: Vec<usize>,
+            },
+            Single {
+                id: T,
+            },
+            Annotated {
+                note: T,
+                actual: usize,
+            },
+            EffectiveAddress {
+                brackets: (T, T),
+                size: Option<T>,
+                arg: usize,
+                index: Option<usize>,
+            },
+        }
+
+        /// Wrapper Enum that signifies the initialization status of an element in `visited`
+        // deriving Default to be able to use std::mem::take
+        #[derive(Default)]
+        enum InitStatus<T, S> {
+            #[default]
+            Uninit,
+            Partial(Kind<T>),
+            Full(RTokenTree<S>),
+        }
+
+        impl<T, S> InitStatus<T, S> {
+            fn assert_partial(self) -> Kind<T> {
+                match self {
+                    Partial(k) => k,
+                    _ => panic!("assertion failed. Field is not partially initialized"),
+                }
+            }
+
+            fn assert_full(self) -> RTokenTree<S> {
+                match self {
+                    Full(k) => k,
+                    _ => panic!("assertion failed. Field is not fully initialized"),
+                }
+            }
+        }
+        use InitStatus::*;
+
+        // (index, subtree)
+        let mut stack = vec![(0, self)];
+
+        // could be done with MaybeUninit but I want to avoid unsafe for now
+        let mut visited = vec![Uninit];
+
+        fn make_new_visited<T, S>(
+            visited: &mut Vec<InitStatus<T, S>>,
+            stack: &mut Vec<(usize, RTokenTree<T>)>,
+            arg: RTokenTree<T>,
+        ) -> usize {
+            let idx = visited.len();
+            visited.push(Uninit); // add new uninit item
+            stack.push((idx, arg));
+            idx
+        }
+
+        // simple dfs
+        while let Some((idx, top)) = stack.pop() {
+            // no need to check for cycles since rusts ownership model does this for us
+
+            let populated = match top {
+                RTokenTree::Expression {
+                    operator,
+                    parenthesis,
+                    args,
+                } => {
+                    let args = args
+                        .into_iter()
+                        .map(|arg| make_new_visited(&mut visited, &mut stack, arg))
+                        .collect();
+                    Kind::Expression {
+                        parenthesis,
+                        operator,
+                        args,
+                    }
+                }
+                RTokenTree::Single { id } => Kind::Single { id },
+                RTokenTree::Annotated { note, actual } => {
+                    let actual = make_new_visited(&mut visited, &mut stack, *actual);
+                    Kind::Annotated { actual, note }
+                }
+                RTokenTree::EffectiveAddress {
+                    brackets,
+                    size,
+                    arg,
+                    index,
+                } => {
+                    let arg = make_new_visited(&mut visited, &mut stack, *arg);
+                    let index =
+                        index.map(|index| make_new_visited(&mut visited, &mut stack, *index));
+                    Kind::EffectiveAddress {
+                        brackets,
+                        size,
+                        arg,
+                        index,
+                    }
+                }
+            };
+
+            visited[idx] = Partial(populated);
+        }
+
+        // since `visited` is topologically sorted, there should not be any conflicts when
+        // traversing the reversed iterator. Furthermore, since DFS visits every node in the
+        // connected graph (which a tree is), there are no uninitialized (`None`) nodes
+
+        for i in (0..visited.len()).rev() {
+            let v = &mut visited[i];
+            let v = std::mem::take(v);
+            let v = v.assert_partial();
+            let full = match v {
+                Kind::Expression {
+                    parenthesis,
+                    operator,
+                    args,
+                } => RTokenTree::Expression {
+                    operator: f(operator),
+                    parenthesis: parenthesis.map(|(l, r)| (f(l), f(r))),
+                    args: args
+                        .into_iter()
+                        .map(|x| std::mem::take(&mut visited[x]).assert_full())
+                        .collect(),
+                },
+                Kind::Single { id } => RTokenTree::Single { id: f(id) },
+                Kind::Annotated { note, actual } => RTokenTree::Annotated {
+                    note: f(note),
+                    actual: Box::new(std::mem::take(&mut visited[actual]).assert_full()),
+                },
+                Kind::EffectiveAddress {
+                    brackets: (l, r),
+                    size,
+                    arg,
+                    index,
+                } => RTokenTree::EffectiveAddress {
+                    brackets: (f(l), f(r)),
+                    size: size.map(&mut f),
+                    arg: Box::new(std::mem::take(&mut visited[arg]).assert_full()),
+                    index: index
+                        .map(|idx| Box::new(std::mem::take(&mut visited[idx]).assert_full())),
+                },
+            };
+
+            visited[i] = Full(full);
+        }
+
+        std::mem::take(&mut visited[0]).assert_full()
+    }
+}
+
 pub(crate) fn single(id: RawToken) -> RTokenTree<RawToken> {
     RTokenTree::Single { id }
 }
@@ -498,36 +664,7 @@ impl<'a> TokenTree<'a> {
 
     pub(crate) fn from_raw(raw: RawTokenTree, input: &'a str) -> TokenTree<'a> {
         let map = move |x: RawToken| Token::from_raw(x, input);
-        match raw {
-            RTokenTree::Expression {
-                operator,
-                args,
-                parenthesis,
-            } => TokenTree::Expression {
-                operator: map(operator),
-                args: args
-                    .into_iter()
-                    .map(|x| TokenTree::from_raw(x, input))
-                    .collect(),
-                parenthesis: parenthesis.map(|(l, r)| (map(l), map(r))),
-            },
-            RTokenTree::Single { id } => Self::Single { id: map(id) },
-            RTokenTree::EffectiveAddress {
-                brackets,
-                arg,
-                index,
-                size,
-            } => Self::EffectiveAddress {
-                brackets: (map(brackets.0), map(brackets.1)),
-                arg: Box::new(TokenTree::from_raw(*arg, input)),
-                index: index.map(|x| Box::new(TokenTree::from_raw(*x, input))),
-                size: size.map(map),
-            },
-            RTokenTree::Annotated { note, actual } => Self::Annotated {
-                note: map(note),
-                actual: Box::new(TokenTree::from_raw(*actual, input)),
-            },
-        }
+        raw.map_leaves(map)
     }
 }
 
