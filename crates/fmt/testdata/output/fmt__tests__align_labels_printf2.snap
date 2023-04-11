@@ -42,8 +42,8 @@ main:                        ; label, start of main program
       push    dword [char1]          ; 'a'
       push    dword msg          ; address of format string
       call    printf              ; Call C function
-      add     esp, 40              ; pop stack 10*4 bytes
+      add     eSp, 40              ; pop stack 10*4 bytes
 
-      mov     eax, 0              ; exit code, 0=normal
+      mov     eAx, 0              ; exit code, 0=normal
       ret                  ; main returns to operating system
 

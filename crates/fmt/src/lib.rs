@@ -231,7 +231,7 @@ pub fn align_operands(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
 ///
 /// Positions where the case is changed are
 /// - instructions
-/// - registers (not yet implemented)
+/// - registers
 /// - directive keywords
 pub struct FixCase<I> {
     iter: I,
@@ -263,22 +263,44 @@ where
 {
     type Item = TopLevel<'a>;
     fn next(&mut self) -> Option<Self::Item> {
-        fn fixup(tok: Token) -> Token {
-            Token {
-                text: Cow::Owned(tok.text.to_lowercase()),
-                ..tok
+        let fixup = |tok: Token<'a>| -> Token<'a> {
+            if self.uppercase_tokens.contains(&tok.kind) {
+                Token {
+                    text: Cow::Owned(tok.text.to_uppercase()),
+                    ..tok
+                }
+            } else {
+                Token {
+                    text: Cow::Owned(tok.text.to_lowercase()),
+                    ..tok
+                }
             }
-        }
-        fn ofixup(tok: Option<Token>) -> Option<Token> {
-            tok.map(fixup)
-        }
+        };
+        let ofixup = |tok: Option<_>| tok.map(fixup);
         let out: Self::Item = self.iter.next()?.map(
-            |label, instruction, operands, comment| TopLevel::Line {
-                // changing the case of a label is potentially not safe
-                label,
-                instruction: ofixup(instruction),
-                operands,
-                comment,
+            |label, instruction, operands, comment| {
+                let operands = operands.map(|operands| {
+                    operands
+                        .into_iter()
+                        .map(|x| {
+                            x.map_leaves(|tok| {
+                                if let TokenKind::Register = tok.kind {
+                                    fixup(tok)
+                                } else {
+                                    tok
+                                }
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
+
+                TopLevel::Line {
+                    // changing the case of a label is potentially not safe
+                    label,
+                    instruction: ofixup(instruction),
+                    operands,
+                    comment,
+                }
             },
             |directive, args, brackets, comment| TopLevel::Directive {
                 directive: fixup(directive),
@@ -355,4 +377,5 @@ mod tests {
         align_operands(l, Default::default())
     });
     snap_local!(fix_case_printf1, "../testdata/printf1.asm", FixCase::new);
+    snap_local!(fix_case_printf2, "../testdata/printf2.asm", FixCase::new);
 }
