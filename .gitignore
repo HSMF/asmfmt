@@ -1,3 +1,5 @@
 /target
 asmfmt-vsc/node_modules
 asmfmt-vsc/out
+.DS_Store
+/*.png
