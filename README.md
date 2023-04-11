@@ -4,8 +4,9 @@ Formatter for NASM-Style Assembly
 
 ## Features
 
-![before image](assets/before.png)
-![after image](assets/after.png)
+|               before               |              after               |
+| :--------------------------------: | :------------------------------: |
+| ![before image](assets/before.png) | ![after image](assets/after.png) |
 
 ## Installation
 
