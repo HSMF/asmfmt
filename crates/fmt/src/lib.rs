@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use asm_lexer::{Token, TopLevel};
+use asm_lexer::{Token, TokenKind, TopLevel};
 
 fn comment_pos(lines: &[TopLevel]) -> usize {
     let mut max = 0;
@@ -225,16 +225,35 @@ pub fn align_operands(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
     }
 }
 
+/// Converts the case of keywords to a consistent case (by default all lowercase)
+///
+/// use [FixCase::set_uppercase_tokens] to set which tokens to change to uppercase instead
+///
+/// Positions where the case is changed are
+/// - instructions
+/// - registers (not yet implemented)
+/// - directive keywords
 pub struct FixCase<I> {
     iter: I,
+    uppercase_tokens: Vec<TokenKind>,
 }
 
 impl<I> FixCase<I> {
+    /// Creates a new iterator that by default changes everything to lowercase
     pub fn new<'a>(iter: I) -> Self
     where
         I: Iterator<Item = TopLevel<'a>>,
     {
-        Self { iter }
+        Self {
+            iter,
+            uppercase_tokens: vec![],
+        }
+    }
+
+    /// sets the tokens that are converted to uppercase instead of lowercase
+    pub fn set_uppercase_tokens(mut self, uppercase_tokens: Vec<TokenKind>) -> Self {
+        self.uppercase_tokens = uppercase_tokens;
+        self
     }
 }
 
@@ -255,7 +274,8 @@ where
         }
         let out: Self::Item = self.iter.next()?.map(
             |label, instruction, operands, comment| TopLevel::Line {
-                label: ofixup(label),
+                // changing the case of a label is potentially not safe
+                label,
                 instruction: ofixup(instruction),
                 operands,
                 comment,
