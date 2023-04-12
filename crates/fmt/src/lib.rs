@@ -225,6 +225,123 @@ pub fn align_operands(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
     }
 }
 
+fn shift_tok(pos: &mut usize, tok: &mut Token) {
+    tok.col = *pos;
+    *pos += tok.text.len();
+}
+
+/// aligns pseudo instructions (such as DB,DW,..., and RESB,RESW,..., and EQU)
+pub fn align_pseudo(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
+    let align_to = lines
+        .iter()
+        .filter_map(|tl| match tl {
+            TopLevel::Line {
+                label: Some(label),
+                instruction:
+                    Some(Token {
+                        kind:
+                            TokenKind::DeclareMemoryInit
+                            | TokenKind::DeclareMemoryUninit
+                            | TokenKind::Equ,
+                        ..
+                    }),
+                ..
+            } => Some(label),
+            _ => None,
+        })
+        .map(|label| label.text.len())
+        .max()
+        .unwrap_or(0)
+        + 1 // columns are 1-based
+        + 1 // colon after label
+        + opts.min_spaces_after_label as usize;
+
+    for (label, tok) in lines.iter_mut().filter_map(|tl| match tl {
+        TopLevel::Line {
+            label,
+            instruction:
+                Some(
+                    tok @ Token {
+                        kind:
+                            TokenKind::DeclareMemoryInit
+                            | TokenKind::DeclareMemoryUninit
+                            | TokenKind::Equ,
+                        ..
+                    },
+                ),
+            ..
+        } => Some((label, tok)),
+        _ => None,
+    }) {
+        if let Some(label) = label {
+            label.col = 1;
+        }
+
+        tok.col = align_to;
+    }
+
+    let align_to_ops = lines
+        .iter()
+        .filter_map(|tl| match tl {
+            TopLevel::Line {
+                label: Some(_),
+                instruction:
+                    Some(Token {
+                        kind:
+                            TokenKind::DeclareMemoryInit
+                            | TokenKind::DeclareMemoryUninit
+                            | TokenKind::Equ,
+                        col,
+                        text,
+                ..
+                    }),
+                ..
+            } => Some(col + text.len()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+        + 1 // columns are 1-based
+        + opts.min_spaces_after_instr as usize;
+
+    for (operands, comment) in
+        lines.iter_mut().filter_map(|tl| match tl {
+            TopLevel::Line {
+                instruction:
+                    Some(Token {
+                        kind:
+                            TokenKind::DeclareMemoryInit
+                            | TokenKind::DeclareMemoryUninit
+                            | TokenKind::Equ,
+                        ..
+                    }),
+                operands,
+                comment,
+                ..
+            } => Some((operands, comment)),
+            _ => None,
+        })
+    {
+        let mut pos = align_to_ops;
+        if let Some(ops) = operands {
+            if !ops.is_empty() {
+                let shift_by = diff_signed(pos, ops[0].col());
+                for i in operands.iter_mut().flatten() {
+                    i.shift_by(shift_by);
+                    pos = i.col() + i.width();
+                }
+            }
+        }
+
+        if let Some(comment) = comment {
+            pos += 2;
+            if comment.col < pos {
+                shift_tok(&mut pos, comment);
+            }
+        }
+    }
+}
+
 /// Converts the case of keywords to a consistent case (by default all lowercase)
 ///
 /// use [FixCase::set_uppercase_tokens] to set which tokens to change to uppercase instead
@@ -350,10 +467,6 @@ where
                 brackets,
                 mut comment,
             } => {
-                fn shift_tok(pos: &mut usize, tok: &mut Token) {
-                    tok.col = *pos;
-                    *pos += tok.text.len();
-                }
                 let (mut l, mut r) = brackets.unzip();
                 let mut pos = self.indent_by;
                 if let Some(l) = &mut l {
@@ -454,6 +567,9 @@ mod tests {
     });
     snap_global!(align_labels_printf2, "../testdata/printf2.asm", |l| {
         align_operands(l, Default::default())
+    });
+    snap_global!(align_pseudo_pseudo, "../testdata/pseudo.asm", |l| {
+        align_pseudo(l, Default::default())
     });
     snap_local!(fix_case_printf1, "../testdata/printf1.asm", FixCase::new);
     snap_local!(fix_case_printf2, "../testdata/printf2.asm", FixCase::new);

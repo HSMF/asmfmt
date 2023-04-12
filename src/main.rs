@@ -41,6 +41,7 @@ fn main() {
     let mut buffered = parsed.collect::<Vec<_>>();
     // align comments
     fmt::align_operands(&mut buffered, Default::default());
+    fmt::align_pseudo(&mut buffered, Default::default());
     fmt::align_comments(&mut buffered, false);
 
     let output = asm_lexer::to_string(buffered.iter());
