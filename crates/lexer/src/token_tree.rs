@@ -780,7 +780,14 @@ fn write_token(
     match token.kind {
         TokenKind::String => {
             align_to(token.col - 1, col, f)?;
-            write!(f, "\"{}\"", token.text)?;
+            let quote_char = if !token.text.contains('"') {
+                '"'
+            } else if !token.text.contains('`') {
+                '`'
+            } else {
+                '\''
+            };
+            write!(f, "{quote_char}{}{quote_char}", token.text)?;
             *col = token.col + token.text.len() + 1;
         }
         TokenKind::Number(crate::Base::Hexadecimal) => {
