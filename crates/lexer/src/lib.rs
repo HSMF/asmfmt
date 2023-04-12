@@ -134,15 +134,16 @@ pub enum TokenKind {
     ExternValue,
     Extern,
 
-    /// DB, DW, DD, DQ, DT, DO, DY and DZ.
-    /// DT, DO, DY and DZ are currently unsupported
+    /// the pseudo instructions DB, DW, DD, DQ, DT, DO, DY and DZ.
     DeclareMemoryInit,
 
-    /// `equ`
+    /// the pseudo instructions RESB, RESW, RESD, RESQ, REST, RESO, RESY and RESZ
+    DeclareMemoryUninit,
+
+    /// the pseudo instruction `equ`
     Equ,
     ClosePrimitiveDirective,
     OpenPrimitiveDirective,
-    DeclareMemoryUninit,
 }
 
 #[derive(Debug, PartialEq, Eq)]
