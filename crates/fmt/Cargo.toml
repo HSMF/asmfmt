@@ -7,6 +7,11 @@ edition = "2021"
 
 [dependencies]
 asm-lexer = { path = "../lexer/" }
+serde = { version = "1.0.160", features = ["derive"], optional = true}
 
 [dev-dependencies]
 insta = "1.29.0"
+
+
+[features]
+serde = ["dep:serde", "asm-lexer/serde"]

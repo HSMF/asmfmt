@@ -58,6 +58,7 @@ pub fn align_comments(lines: &mut [TopLevel], shift_only_comments: bool) {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug)]
 pub struct AlignOperandsOpt {
     /// how far away the 'instruction column' should appear from the 'label column', in spaces
@@ -435,6 +436,8 @@ where
 /// Furthermore improves the spacing between directive and operands of that directive
 ///
 /// Moves comments out of the way if needed, but do not use this to prettify comments
+///
+/// use [IndentDirectives::set_indent] to set the indentation amount
 pub struct IndentDirectives<I> {
     iter: I,
     indent_by: usize,

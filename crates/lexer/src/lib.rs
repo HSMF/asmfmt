@@ -48,6 +48,7 @@ use crate::token_tree::single;
 mod token_tree;
 pub use token_tree::{to_string, TokenTree, TopLevel};
 
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The base of a number.
 pub enum Base {
@@ -58,6 +59,7 @@ pub enum Base {
     Float,
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TokenKind {
     /// A Label
