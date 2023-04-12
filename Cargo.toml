@@ -8,7 +8,9 @@ description = "A Formatter for NASM-Style Assembly"
 [dependencies]
 asm-lexer = {path = "crates/lexer"}
 clap = { version = "4.2.1", features = ["derive"] }
-fmt = {path = "crates/fmt"}
+fmt = {path = "crates/fmt", features = ["serde"]}
+serde = { version = "1.0.160", features = ["derive"] }
+serde_yaml = "0.9.21"
 
 [workspace]
 members = ["crates/lexer", "crates/fmt"]

@@ -63,3 +63,25 @@ Use [this extension](./asmfmt-vsc/)
 ### Others
 
 - if your editor is not supported and you know how to support it, please submit a PR. Thanks!
+
+## Configuration
+
+The configuration for `asmfmt` is a yaml file that can be specified via `--config <CONFIG_FILE>`
+
+The default configuration looks something like this:
+
+```yaml
+# place this in config.yaml
+use_tabs: false                 # whether to tabs to indent
+shift_only_comments: false      # whether to align lines that are only comments
+align_operands:                 # how to align normal instructions
+  min_spaces_after_label: 1
+  min_spaces_after_instr: 4
+align_pseudo_ops:               # how to align pseudo instructions (such as DB)
+  min_spaces_after_label: 1
+  min_spaces_after_instr: 4
+uppercase_tokens: []            # which tokens are to be made uppercase
+indent_directives: 4            # how far to indent directives
+```
+
+
