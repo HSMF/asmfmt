@@ -784,8 +784,8 @@ fn write_token(
             *col = token.col + token.text.len() + 1;
         }
         TokenKind::Number(crate::Base::Hexadecimal) => {
-            align_to(token.col - 2, col, f)?;
-            write!(f, "0x{}", token.text)?;
+            align_to(token.col, col, f)?;
+            write!(f, "{}", token.text)?;
             *col = token.col + token.text.len();
         }
         _ => {

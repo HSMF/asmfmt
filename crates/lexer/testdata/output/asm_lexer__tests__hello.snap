@@ -69,7 +69,7 @@ main:                      ; standard  gcc  entry point
                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (20/29) " write sysout command to int 80 hex"
     int    0x80            ; interrupt 80 hex, call kernel
     ^^^ Instruction : (21/5) "int"
-             ^^ Number(Hexadecimal) : (21/14) "80"
+           ^^^^ Number(Hexadecimal) : (21/12) "0x80"
                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (21/29) " interrupt 80 hex, call kernel"
     
     mov    ebx,0           ; exit code, 0=normal
@@ -84,6 +84,6 @@ main:                      ; standard  gcc  entry point
                             ^^^^^^^^^^^^^^^^^^^^^^^ Comment : (24/29) " exit command to kernel"
     int    0x80            ; interrupt 80 hex, call kernel
     ^^^ Instruction : (25/5) "int"
-             ^^ Number(Hexadecimal) : (25/14) "80"
+           ^^^^ Number(Hexadecimal) : (25/12) "0x80"
                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (25/29) " interrupt 80 hex, call kernel"
 

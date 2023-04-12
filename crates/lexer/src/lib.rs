@@ -55,6 +55,7 @@ pub enum Base {
     Octal,
     Decimal,
     Hexadecimal,
+    Float,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -141,6 +142,7 @@ pub enum TokenKind {
     Equ,
     ClosePrimitiveDirective,
     OpenPrimitiveDirective,
+    DeclareMemoryUninit,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -174,7 +176,9 @@ impl<'a> Token<'a> {
             kind: raw.kind,
             line: raw.pos.location_line(),
             col: raw.pos.get_utf8_column(),
-            text: Cow::Borrowed(&input[raw.pos.location_offset()..raw.pos.location_offset() + raw.length]),
+            text: Cow::Borrowed(
+                &input[raw.pos.location_offset()..raw.pos.location_offset() + raw.length],
+            ),
         }
     }
 }
@@ -563,7 +567,11 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
     // prefix 0h for hexadecimal, 0d or 0t for decimal, 0o or 0q for octal, and 0b or
     // 0y for binary. Please note that unlike C, a 0 prefix by itself does not imply
     // an octal constant!
+    //
+    // Floating-point constants are expressed in the traditional form: digits, then
+    // a period, then optionally more digits, then optionally an E followed by an exponent.
 
+    // TODO: number should contain entire number, încluding prefix
     fn map_number(base: Base) -> impl FnMut(Span) -> RawToken {
         move |span| RawToken {
             kind: TokenKind::Number(base),
@@ -580,13 +588,21 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
         map_number(Base::Hexadecimal),
     );
 
-    let hex_prefix = map(
-        preceded(
+    let hex_prefix = |s: Span<'a>| {
+        let (s, num) = preceded(
             alt((tag("0x"), tag("0h"), tag("$"))),
             take_while1(|ch: char| ch.is_ascii_hexdigit()),
-        ),
-        map_number(Base::Hexadecimal),
-    );
+        )(s)?;
+
+        Ok((
+            s,
+            RawToken {
+                kind: TokenKind::Number(Base::Hexadecimal),
+                pos: num,
+                length: num.len(),
+            },
+        ))
+    };
 
     let bin_postfix = map(
         terminated(
@@ -636,28 +652,97 @@ fn parse_number<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, R
         map_number(Base::Decimal),
     );
 
-    let dec_normal = map(
-        take_while1(|ch: char| ch.is_ascii_digit()),
-        map_number(Base::Decimal),
-    );
+    let dec_normal = |s| {
+        map(
+            take_while1(|ch: char| ch.is_ascii_digit()),
+            map_number(Base::Decimal),
+        )(s)
+    };
+
+    let float = |s: Span<'a>| {
+        let (s, pos) = position(s)?;
+        let (s, digits) = take_while1(|ch: char| ch.is_ascii_digit())(s)?;
+        let (s, period) = tag(".")(s)?;
+        let (s, more_digits) = take_while(|ch: char| ch.is_ascii_digit())(s)?;
+
+        Ok((
+            s,
+            RawToken {
+                kind: TokenKind::Number(Base::Float),
+                pos,
+                length: digits.len() + period.len() + more_digits.len(),
+            },
+        ))
+    };
+
+    let float_exp = |s: Span<'a>| {
+        let (s, flt) = float(s)?;
+        let (s, exp) = one_of("eE")(s)?;
+        let (s, sign) = opt(one_of("+-"))(s)?;
+        let (s, exponent) = dec_normal(s)?;
+        Ok((
+            s,
+            RawToken {
+                length: flt.length
+                    + exp.len_utf8()
+                    + sign.map(|x| x.len_utf8()).unwrap_or(0)
+                    + exponent.length,
+                ..flt
+            },
+        ))
+    };
+
+    let float_c99 = |s: Span<'a>| {
+        let (s, before) = position(s)?;
+        let (s, _flt) = hex_prefix(s)?;
+        let (s, _period) = tag(".")(s)?;
+        let (s, _sign) = opt(one_of("+-"))(s)?;
+        let (s, _exp) = dec_normal(s)?;
+        let (s, after) = position(s)?;
+
+        Ok((
+            s,
+            RawToken {
+                length: after.location_offset() - before.location_offset(),
+                kind: TokenKind::Number(Base::Float),
+                pos: before,
+            },
+        ))
+    };
 
     let (s, _) = take_whitespace(s)?;
-    let (s, out) = terminated(
-        alt((
-            hex_postfix,
-            hex_prefix,
-            bin_postfix,
-            bin_prefix,
-            oct_postfix,
-            oct_prefix,
-            dec_postfix,
-            dec_prefix,
-            dec_normal,
+    let (s, (before, _, out, after)) = terminated(
+        tuple((
+            position,
+            opt(one_of("+-")),
+            alt((
+                float_exp,
+                float,
+                float_c99,
+                hex_postfix,
+                hex_prefix,
+                bin_postfix,
+                bin_prefix,
+                oct_postfix,
+                oct_prefix,
+                dec_postfix,
+                dec_prefix,
+                dec_normal,
+            )),
+            position,
         )),
         not(satisfy(|ch: char| ch.is_ascii_alphanumeric())),
     )(s)?;
+
     let (s, _) = take_whitespace(s)?;
-    Ok((s, out))
+    Ok((
+        s,
+        RawToken {
+            pos: before,
+            length: after.location_offset() - before.location_offset(),
+            ..out
+        },
+    ))
 }
 
 fn parse_operands<'a, E: ParseError<Span<'a>>>(
@@ -777,27 +862,52 @@ fn parse_decl<'a, E: ParseError<Span<'a>>>(
 ) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawTokenTree<'a>>), E> {
     let (s, _) = take_whitespace(s)?;
 
-    let (s, declarer) = alt((
-        tag_no_case("db"),
-        tag_no_case("dw"),
-        tag_no_case("dd"),
-        tag_no_case("dq"),
-        // the following are floating point
-        // this is not yet supported
-        // tag_no_case("DT"),
-        // tag_no_case("DO"),
-        // tag_no_case("DY"),
-        // tag_no_case("DZ"),
-    ))(s)?;
+    fn init<'a, E: ParseError<Span<'a>>>(
+        s: Span<'a>,
+    ) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawTokenTree<'a>>), E> {
+        let (s, declarer) = alt((
+            tag_no_case("db"),
+            tag_no_case("dw"),
+            tag_no_case("dd"),
+            tag_no_case("dq"),
+            tag_no_case("dt"),
+            tag_no_case("do"),
+            tag_no_case("dy"),
+            tag_no_case("dz"),
+        ))(s)?;
 
-    let (s, value) = separated_list1(
-        tag(","),
-        alt((parse_number.map(single), parse_str.map(single))),
-    )(s)?;
+        let (s, value) = separated_list1(
+            tag(","),
+            alt((parse_number.map(single), parse_str.map(single))),
+        )(s)?;
 
-    let init = RawToken::from_span(TokenKind::DeclareMemoryInit, declarer);
+        let init = RawToken::from_span(TokenKind::DeclareMemoryInit, declarer);
 
-    Ok((s, (init, value)))
+        Ok((s, (init, value)))
+    }
+
+    fn uninit<'a, E: ParseError<Span<'a>>>(
+        s: Span<'a>,
+    ) -> IResult<Span<'a>, (RawToken<'a>, Vec<RawTokenTree<'a>>), E> {
+        let (s, declarer) = alt((
+            tag_no_case("resb"),
+            tag_no_case("resw"),
+            tag_no_case("resd"),
+            tag_no_case("resq"),
+            tag_no_case("rest"),
+            tag_no_case("reso"),
+            tag_no_case("resy"),
+            tag_no_case("resz"),
+        ))(s)?;
+
+        let (s, value) = parse_number(s)?;
+
+        let init = RawToken::from_span(TokenKind::DeclareMemoryUninit, declarer);
+
+        Ok((s, (init, vec![single(value)])))
+    }
+
+    alt((init, uninit))(s)
 }
 
 fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
@@ -1150,6 +1260,7 @@ mod tests {
     snap!(printf1, "../testdata/printf1.asm");
     snap!(hm, "../testdata/hm.asm");
     snap!(directives, "../testdata/directives.asm");
+    snap!(numbers, "../testdata/numbers.asm");
 
     mod components {
         use super::*;

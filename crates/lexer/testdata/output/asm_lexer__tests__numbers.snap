@@ -1,0 +1,52 @@
+---
+source: crates/lexer/src/lib.rs
+expression: snapshot
+---
+
+; format string for printf
+ ^^^^^^^^^^^^^^^^^^^^^^^^^ Comment : (2/2) " format string for printf"
+int1:     dd    1234567
+^^^^ Label : (3/1) "int1"
+          ^^ DeclareMemoryInit : (3/11) "dd"
+                ^^^^^^^ Number(Decimal) : (3/17) "1234567"
+int2:     dd    0o1234567
+^^^^ Label : (4/1) "int2"
+          ^^ DeclareMemoryInit : (4/11) "dd"
+                ^^^^^^^^^ Number(Octal) : (4/17) "0o1234567"
+int3:     dd    $1234
+^^^^ Label : (5/1) "int3"
+          ^^ DeclareMemoryInit : (5/11) "dd"
+                ^^^^^ Number(Hexadecimal) : (5/17) "$1234"
+    mov eax, ecx
+    ^^^ Instruction : (6/5) "mov"
+        ^^^ Register : (6/9) "eax"
+             ^^^ Register : (6/14) "ecx"
+hex1:     dd    0x6789ABCD
+^^^^ Label : (7/1) "hex1"
+          ^^ DeclareMemoryInit : (7/11) "dd"
+                ^^^^^^^^^^ Number(Hexadecimal) : (7/17) "0x6789ABCD"
+flt0:     dd    5.327
+^^^^ Label : (8/1) "flt0"
+          ^^ DeclareMemoryInit : (8/11) "dd"
+                ^^^^^ Number(Float) : (8/17) "5.327"
+flt1:     dd    5.327e-30
+^^^^ Label : (9/1) "flt1"
+          ^^ DeclareMemoryInit : (9/11) "dd"
+                ^^^^^^^^^ Number(Float) : (9/17) "5.327e-30"
+flt2:     dq    -123.456789e300
+^^^^ Label : (10/1) "flt2"
+          ^^ DeclareMemoryInit : (10/11) "dq"
+                ^^^^^^^^^^^^^^^ Number(Float) : (10/17) "-123.456789e300"
+flt3:     dq    0x1a.30
+^^^^ Label : (11/1) "flt3"
+          ^^ DeclareMemoryInit : (11/11) "dq"
+                ^^^^^^^ Number(Float) : (11/17) "0x1a.30"
+flt4:     dq    $1a.30
+^^^^ Label : (12/1) "flt4"
+          ^^ DeclareMemoryInit : (12/11) "dq"
+                ^^^^^^ Number(Float) : (12/17) "$1a.30"
+uninit:   resq 16
+^^^^^^ Label : (13/1) "uninit"
+          ^^^^ DeclareMemoryUninit : (13/11) "resq"
+               ^^ Number(Decimal) : (13/16) "16"
+

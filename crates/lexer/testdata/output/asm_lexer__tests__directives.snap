@@ -36,5 +36,5 @@ main:
 
     int 0x80
     ^^^ Instruction : (9/5) "int"
-          ^^ Number(Hexadecimal) : (9/11) "80"
+        ^^^^ Number(Hexadecimal) : (9/9) "0x80"
 
