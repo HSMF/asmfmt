@@ -969,6 +969,20 @@ impl<'a> TokenTreeWriter<'a> {
 }
 
 /// represents an entire Document. Helper struct mainly to serialize the document.
+/// ```
+/// # use asm_lexer::{Lexer, Document};
+/// let source = r#"
+/// global main
+/// main: mov eax, 15
+///       add eax, 200
+///       mov ecx, eax
+/// "#;
+/// // without any modifications to the token tree this just outputs the original
+/// // program
+/// let lines = Lexer::new(source).collect::<Vec<_>>();
+/// let document = Document::new(&lines);
+/// assert_eq!(&document.to_string(), source);
+/// ```
 pub struct Document<'a, 'b> {
     lines: &'a [TopLevel<'b>],
 }
@@ -978,10 +992,10 @@ impl<'a, 'b> Document<'a, 'b> {
         Self { lines }
     }
 
-    /// turns an iterator of [TopLevel] items into a string.
+    /// convenience function that turns an iterator of [TopLevel] items into a string.
     ///
     /// ```
-    /// # use asm_lexer::{Lexer, to_string};
+    /// # use asm_lexer::{Lexer, Document};
     /// let source = r#"
     /// global main
     /// main: mov eax, 15
@@ -990,9 +1004,30 @@ impl<'a, 'b> Document<'a, 'b> {
     /// "#;
     /// // without any modifications to the token tree this just outputs the original
     /// // program
-    /// assert_eq!(Document::write_iter(Lexer::new(source)), source);
+    /// assert_eq!(&Document::iter_to_string(Lexer::new(source)), source);
     /// ```
-    pub fn write_iter<I, T>(lines: I, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+    pub fn iter_to_string<I, T>(lines: I) -> String
+    where
+        I: Iterator<Item = T>,
+        T: std::borrow::Borrow<TopLevel<'a>>,
+    {
+        let mut lnum = 1;
+        let mut out = String::new();
+        for line in lines {
+            let line = line.borrow();
+            let got_lnum = line.line();
+            while lnum < got_lnum {
+                out.push('\n');
+                lnum += 1;
+            }
+            use std::fmt::Write;
+            writeln!(out, "{line}").expect("can write");
+            lnum += 1;
+        }
+        out
+    }
+
+    fn write_iter<I, T>(lines: I, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
     where
         I: Iterator<Item = T>,
         T: std::borrow::Borrow<TopLevel<'a>>,
@@ -1026,10 +1061,7 @@ mod tests {
 
     macro_rules! check_id {
         ($name:ident) => {
-            #[test]
-            fn $name() {
-                check_id!($name, concat!("../testdata/", stringify!($name), ".asm"));
-            }
+            check_id!($name, concat!("../testdata/", stringify!($name), ".asm"));
         };
         ($name:ident, $path:expr) => {
             #[test]

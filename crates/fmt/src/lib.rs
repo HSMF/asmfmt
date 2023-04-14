@@ -511,7 +511,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use asm_lexer::{to_string, Lexer};
+    use asm_lexer::{Document, Lexer};
 
     use super::*;
 
@@ -519,7 +519,7 @@ mod tests {
         let lexer = Lexer::new(s);
         let mut lines = lexer.collect::<Vec<_>>();
         f(&mut lines);
-        to_string(lines.iter())
+        Document::new(&lines).to_string()
     }
 
     fn apply_local_fmt<'a, F, B>(s: &'a str, f: F) -> String
@@ -528,8 +528,8 @@ mod tests {
         F: FnOnce(Lexer<'a>) -> B,
     {
         let lexer = Lexer::new(s);
-        let lines = f(lexer);
-        to_string(lines)
+        let lines = f(lexer).collect::<Vec<_>>();
+        Document::new(&lines).to_string()
     }
 
     macro_rules! snap_global {
