@@ -72,7 +72,7 @@ The default configuration looks something like this:
 
 ```yaml
 # place this in config.yaml
-use_tabs: false                 # whether to tabs to indent
+use_tabs: false                 # whether to use tabs to indent
 shift_only_comments: false      # whether to align lines that are only comments
 align_operands:                 # how to align normal instructions
   min_spaces_after_label: 1
