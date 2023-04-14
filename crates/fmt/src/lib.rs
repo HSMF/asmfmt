@@ -59,12 +59,15 @@ pub fn align_comments(lines: &mut [TopLevel], shift_only_comments: bool) {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct AlignOperandsOpt {
     /// how far away the 'instruction column' should appear from the 'label column', in spaces
     pub min_spaces_after_label: u8,
     /// how far away the 'operands column' should appear from the 'instruction column', in spaces
     pub min_spaces_after_instr: u8,
+
+    /// how much padding there is between columns
+    pub column_distance: u8,
 }
 
 impl Default for AlignOperandsOpt {
@@ -72,6 +75,7 @@ impl Default for AlignOperandsOpt {
         Self {
             min_spaces_after_label: 1,
             min_spaces_after_instr: 4,
+            column_distance: 2,
         }
     }
 }
@@ -81,6 +85,134 @@ fn diff_signed(a: usize, b: usize) -> isize {
         (a - b) as isize
     } else {
         -((b - a) as isize)
+    }
+}
+
+fn align_instr(chunk: &mut [TopLevel], opts: &AlignOperandsOpt) {
+    fn label_end(t: &TopLevel) -> usize {
+        match t {
+            TopLevel::Line {
+                label: Some(label), ..
+            } => label.col + label.text.len(),
+            _ => 0,
+        }
+    }
+    let shifty_col = chunk
+            .iter()
+            .map(label_end)
+            .max()
+            .unwrap_or(0)
+            + 1 // the ':' after the label
+            + opts.min_spaces_after_label as usize;
+
+    for line in chunk {
+        match line {
+            TopLevel::Line {
+                label: _,
+                instruction: Some(instr),
+                operands,
+                comment,
+            } => {
+                let shift_by = diff_signed(shifty_col, instr.col);
+                instr.col = shifty_col;
+                let mut last_col = shifty_col + instr.text.len();
+
+                for i in operands.iter_mut().flatten() {
+                    i.shift_by(shift_by);
+                }
+                if let Some(last) = operands.iter().flatten().last() {
+                    last_col = last.col() + last.width();
+                }
+                if let Some(comment) = comment {
+                    if comment.col <= last_col {
+                        comment.col = comment.col.wrapping_add_signed(shift_by);
+                    }
+                }
+            }
+            TopLevel::Line {
+                label: _,
+                instruction: _,
+                operands: Some(ops),
+                comment,
+            } if ops.get(0).map(|x| x.col() < shifty_col) == Some(true) => {
+                let shift_by = diff_signed(shifty_col, ops[0].col());
+
+                for i in ops.iter_mut() {
+                    i.shift_by(shift_by)
+                }
+                let last_col = if let Some(last) = ops.iter().last() {
+                    last.col() + last.width()
+                } else {
+                    0
+                };
+                if let Some(comment) = comment {
+                    if comment.col <= last_col {
+                        comment.col = comment.col.wrapping_add_signed(shift_by);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+fn align_ops(chunk: &mut [TopLevel], opts: &AlignOperandsOpt) {
+    let shifty_col_each = chunk
+        .iter()
+        .filter_map(|t| match t {
+            TopLevel::Line {
+                instruction: Some(instruction),
+                operands,
+                ..
+            } => Some((instruction, operands)),
+            _ => None,
+        })
+        .map(|(ins, ops)| {
+            let mut out = vec![ins.col + ins.text.len()];
+            for op in ops.iter().flatten() {
+                out.push(op.width());
+            }
+            out
+        })
+        .fold(vec![0], |mut so_far, cur| {
+            if cur.len() > so_far.len() {
+                so_far.extend_from_slice(&cur[so_far.len()..])
+            }
+
+            for (a, b) in so_far.iter_mut().zip(cur) {
+                *a = (*a).max(b);
+            }
+
+            so_far
+        });
+    let shifty_col = shifty_col_each[0] + opts.min_spaces_after_instr as usize;
+    let widths = &shifty_col_each[1..];
+
+    for line in chunk {
+        match line {
+            TopLevel::Line {
+                label: _,
+                instruction: _,
+                operands: Some(ops),
+                comment,
+            } if !ops.is_empty() => {
+                let mut pos = shifty_col;
+                for (op, width) in ops.iter_mut().zip(widths) {
+                    let shift_by = diff_signed(pos, op.col());
+                    op.shift_by(shift_by);
+                    pos += width + 1 + opts.column_distance as usize;
+                }
+
+                if let Some(comment) = comment {
+                    if comment.col <= pos {
+                        let shift_by = diff_signed(pos, comment.col);
+                        comment.col = comment.col.wrapping_add_signed(shift_by);
+                    }
+                }
+            }
+            _ => {}
+        }
+        eprintln!("> {line}");
     }
 }
 
@@ -101,25 +233,6 @@ pub fn align_operands(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
         }
     }
 
-    fn label_end(t: &TopLevel) -> usize {
-        match t {
-            TopLevel::Line {
-                label: Some(label), ..
-            } => label.col + label.text.len(),
-            _ => 0,
-        }
-    }
-
-    fn instr_end(t: &TopLevel) -> usize {
-        match t {
-            TopLevel::Line {
-                instruction: Some(instr),
-                ..
-            } => instr.col + instr.text.len(),
-            _ => 0,
-        }
-    }
-
     while index < lines.len() {
         let next_with_label = lines
             .iter()
@@ -128,99 +241,11 @@ pub fn align_operands(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
             .find(|(_, line)| has_label(line))
             .map(|(i, _)| i)
             .unwrap_or(lines.len());
-        let shifty_col = lines[index.saturating_sub(1)..next_with_label]
-            .iter()
-            .map(label_end)
-            .max()
-            .unwrap_or(0)
-            + 1 // the ':' after the label
-            + opts.min_spaces_after_label as usize;
-
-        for line in &mut lines[index..next_with_label] {
-            match line {
-                TopLevel::Line {
-                    label: _,
-                    instruction: Some(instr),
-                    operands,
-                    comment,
-                } => {
-                    let shift_by = diff_signed(shifty_col, instr.col);
-                    instr.col = shifty_col;
-                    let mut last_col = shifty_col + instr.text.len();
-
-                    for i in operands.iter_mut().flatten() {
-                        i.shift_by(shift_by);
-                    }
-                    if let Some(last) = operands.iter().flatten().last() {
-                        last_col = last.col() + last.width();
-                    }
-                    if let Some(comment) = comment {
-                        if comment.col <= last_col {
-                            comment.col = comment.col.wrapping_add_signed(shift_by);
-                        }
-                    }
-                }
-                TopLevel::Line {
-                    label: _,
-                    instruction: _,
-                    operands: Some(ops),
-                    comment,
-                } if ops.get(0).map(|x| x.col() < shifty_col) == Some(true) => {
-                    let shift_by = diff_signed(shifty_col, ops[0].col());
-
-                    for i in ops.iter_mut() {
-                        i.shift_by(shift_by)
-                    }
-                    let last_col = if let Some(last) = ops.iter().last() {
-                        last.col() + last.width()
-                    } else {
-                        0
-                    };
-                    if let Some(comment) = comment {
-                        if comment.col <= last_col {
-                            comment.col = comment.col.wrapping_add_signed(shift_by);
-                        }
-                    }
-                }
-                _ => (),
-            }
-        }
+        let chunk = &mut lines[index.saturating_sub(1)..next_with_label];
+        align_instr(chunk, &opts);
 
         // do the same but for operands
-        let shifty_col = lines[index.saturating_sub(1)..next_with_label]
-            .iter()
-            .map(instr_end)
-            .max()
-            .unwrap_or(0)
-            + opts.min_spaces_after_instr as usize;
-
-        for line in &mut lines[index..next_with_label] {
-            match line {
-                TopLevel::Line {
-                    label: _,
-                    instruction: _,
-                    operands: Some(ops),
-                    comment,
-                } if !ops.is_empty() => {
-                    let shift_by = diff_signed(shifty_col, ops[0].col());
-
-                    for i in ops.iter_mut() {
-                        i.shift_by(shift_by)
-                    }
-                    let last_col = if let Some(last) = ops.iter().last() {
-                        last.col() + last.width()
-                    } else {
-                        0
-                    };
-                    if let Some(comment) = comment {
-                        if comment.col <= last_col {
-                            comment.col = comment.col.wrapping_add_signed(shift_by);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        align_ops(chunk, &opts);
 
         index = next_with_label + 1;
     }
@@ -329,13 +354,13 @@ pub fn align_pseudo(lines: &mut [TopLevel], opts: AlignOperandsOpt) {
                 let shift_by = diff_signed(pos, ops[0].col());
                 for i in operands.iter_mut().flatten() {
                     i.shift_by(shift_by);
-                    pos = i.col() + i.width();
+                    pos = i.col() + i.width() + 1;
                 }
             }
         }
 
         if let Some(comment) = comment {
-            pos += 2;
+            // pos += 1;
             if comment.col < pos {
                 shift_tok(&mut pos, comment);
             }

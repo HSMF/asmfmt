@@ -8,19 +8,19 @@ expression: snapshot
 
        SECTION .data                   ; Data section
 
-msg:    db "Hello world: %c %s of length %d %d %X %e %E",10,0
+msg: db   "Hello world: %c %s of length %d %d %X %e %E",   10,  0
                     ; format string for printf
-char1:    db    "a"            ; a character 
-str1:    db    "string",0            ; a C string, "string" needs 0
-len:    equ    $-str1            ; len has value, not an address
-inta1:    dd    1234567                ; integer 1234567
-hex1:    dd    0x6789ABCD            ; hex constant 
-flt1:    dd    5.327e-30        ; 32-bit floating point
-flt2:    dq    -123.456789e300            ; 64-bit floating point
+char1: db   "a"                ; a character 
+str1: db   "string",   0             ; a C string, "string" needs 0
+len: equ    $-str1               ; len has value, not an address
+inta1: dd    1234567                   ; integer 1234567
+hex1: dd    0x6789ABCD               ; hex constant 
+flt1: dd    5.327e-30           ; 32-bit floating point
+flt2: dq    -123.456789e300               ; 64-bit floating point
 
    SECTION .bss
 
-flttmp:    resq 1                    ; 64-bit temporary for printing flt1
+flttmp: resq    1                    ; 64-bit temporary for printing flt1
 
      SECTION .text                   ; Code section.
 
@@ -38,12 +38,12 @@ main:                        ; label, start of main program
       push    dword [hex1]          ; hex constant
       push    dword [inta1]        ; integer data pass by value
       push    dword len          ; constant pass by value
-      push    dword str1     ; "string" pass by reference 
+      push    dword str1        ; "string" pass by reference 
       push    dword [char1]          ; 'a'
       push    dword msg          ; address of format string
       call    printf              ; Call C function
-      add     eSp, 40              ; pop stack 10*4 bytes
+      add     eSp,               40  ; pop stack 10*4 bytes
 
-      mov     eAx, 0              ; exit code, 0=normal
+      mov     eAx,               0   ; exit code, 0=normal
       ret                  ; main returns to operating system
 
