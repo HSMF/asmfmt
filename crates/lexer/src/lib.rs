@@ -221,9 +221,7 @@ fn take_whitespace<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>
 }
 
 fn take_until_eol<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
-    dbg!(s);
     let (s, line) = not_line_ending(s)?;
-    dbg!(s);
     Ok((s, line))
 }
 
@@ -514,8 +512,8 @@ fn parse_str<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawT
             ),
             map(
                 preceded(
-                    tag("\\o"),
-                    take_while_m_n(1, 2, |ch: char| ('0'..='7').contains(&ch)),
+                    tag("\\"),
+                    take_while_m_n(1, 3, |ch: char| ('0'..='7').contains(&ch)),
                 ),
                 |_| (),
             ),
@@ -1214,8 +1212,7 @@ mod tests {
         let mut output = String::new();
         // eprintln!("{tokens:?}");
         if let Some(x) = tokens.iter().find(|x| matches!(x.kind, TokenKind::Illegal)) {
-            dbg!(x);
-            panic!("ajksd");
+            panic!("got illegal {x:#?}");
         }
         for (row, line) in input.lines().enumerate() {
             output += line;
