@@ -46,7 +46,7 @@ use token_tree::{RawTokenTree, RawTopLevel};
 use crate::token_tree::single;
 
 mod token_tree;
-pub use token_tree::{to_string, TokenTree, TopLevel};
+pub use token_tree::{Document, TokenTree, TopLevel};
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

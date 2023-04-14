@@ -968,39 +968,54 @@ impl<'a> TokenTreeWriter<'a> {
     }
 }
 
-/// turns an iterator of [TopLevel] items into a string.
-///
-/// ```
-/// # use asm_lexer::{Lexer, to_string};
-/// let source = r#"
-/// global main
-/// main: mov eax, 15
-///       add eax, 200
-///       mov ecx, eax
-/// "#;
-/// // without any modifications to the token tree this just outputs the original
-/// // program
-/// assert_eq!(to_string(Lexer::new(source)), source);
-/// ```
-pub fn to_string<'a, I, T>(lines: I) -> String
-where
-    I: Iterator<Item = T>,
-    T: std::borrow::Borrow<TopLevel<'a>>,
-{
-    let mut out = "".to_owned();
-    let mut lnum = 1;
-    for line in lines {
-        let line = line.borrow();
-        let got_lnum = line.line();
-        while lnum < got_lnum {
-            out.push('\n');
+/// represents an entire Document. Helper struct mainly to serialize the document.
+pub struct Document<'a, 'b> {
+    lines: &'a [TopLevel<'b>],
+}
+
+impl<'a, 'b> Document<'a, 'b> {
+    pub fn new(lines: &'a [TopLevel<'b>]) -> Self {
+        Self { lines }
+    }
+
+    /// turns an iterator of [TopLevel] items into a string.
+    ///
+    /// ```
+    /// # use asm_lexer::{Lexer, to_string};
+    /// let source = r#"
+    /// global main
+    /// main: mov eax, 15
+    ///       add eax, 200
+    ///       mov ecx, eax
+    /// "#;
+    /// // without any modifications to the token tree this just outputs the original
+    /// // program
+    /// assert_eq!(Document::write_iter(Lexer::new(source)), source);
+    /// ```
+    pub fn write_iter<I, T>(lines: I, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+    where
+        I: Iterator<Item = T>,
+        T: std::borrow::Borrow<TopLevel<'a>>,
+    {
+        let mut lnum = 1;
+        for line in lines {
+            let line = line.borrow();
+            let got_lnum = line.line();
+            while lnum < got_lnum {
+                writeln!(f)?;
+                lnum += 1;
+            }
+            writeln!(f, "{line}")?;
             lnum += 1;
         }
-        out += &line.to_string();
-        out.push('\n');
-        lnum += 1;
+        Ok(())
     }
-    out
+}
+
+impl std::fmt::Display for Document<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Document::write_iter(self.lines.iter(), f)
+    }
 }
 
 #[cfg(test)]
@@ -1013,18 +1028,16 @@ mod tests {
         ($name:ident) => {
             #[test]
             fn $name() {
-                let source = include_str!(concat!("../testdata/", stringify!($name), ".asm"));
-                let parsed = Lexer::new(source).collect::<Vec<_>>();
-                let reconstructed = to_string(parsed.iter());
-                assert_eq!(source, &reconstructed);
+                check_id!($name, concat!("../testdata/", stringify!($name), ".asm"));
             }
         };
-        ($name:ident, $path:literal) => {
+        ($name:ident, $path:expr) => {
             #[test]
             fn $name() {
                 let source = include_str!($path);
-                let parsed = Lexer::new(source).collect();
-                let reconstructed = reconstruct(parsed);
+                let parsed = Lexer::new(source).collect::<Vec<_>>();
+                let doc = Document::new(&parsed);
+                let reconstructed = doc.to_string();
                 assert_eq!(source, &reconstructed);
             }
         };

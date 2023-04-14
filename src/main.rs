@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
 };
 
-use asm_lexer::{Lexer, TokenKind};
+use asm_lexer::{Lexer, TokenKind, Document};
 use clap::Parser;
 use fmt::{AlignOperandsOpt, FixCase, IndentDirectives};
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,6 @@ fn main() {
         config.shift_only_comments.unwrap_or_default(),
     );
 
-    let output = asm_lexer::to_string(buffered.iter());
-    println!("{output}");
+    let doc = Document::new(&buffered);
+    println!("{doc}");
 }
