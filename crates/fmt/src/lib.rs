@@ -509,6 +509,48 @@ where
     }
 }
 
+/// Moves labels to the beginning of the line.
+pub struct DedentLabels<I> {
+    iter: I,
+}
+
+impl<'a, I> DedentLabels<I>
+where
+    I: Iterator<Item = TopLevel<'a>>,
+{
+    pub fn new(iter: I) -> Self {
+        Self { iter }
+    }
+}
+
+impl<'a, I> Iterator for DedentLabels<I>
+where
+    I: Iterator<Item = TopLevel<'a>>,
+{
+    type Item = TopLevel<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.iter.next()?;
+
+        Some(match next {
+            TopLevel::Line {
+                label: Some(mut label),
+                instruction,
+                operands,
+                comment,
+            } => {
+                label.col = 1;
+                TopLevel::Line {
+                    label: Some(label),
+                    instruction,
+                    operands,
+                    comment,
+                }
+            }
+            x => x,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use asm_lexer::{Document, Lexer};
@@ -580,5 +622,10 @@ mod tests {
         indent_dir_directives,
         "../testdata/directives.asm",
         IndentDirectives::new
+    );
+    snap_local!(
+        dedent_labels_labels,
+        "../testdata/labels.asm",
+        DedentLabels::new
     );
 }

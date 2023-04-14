@@ -3,9 +3,9 @@ use std::{
     path::PathBuf,
 };
 
-use asm_lexer::{Lexer, TokenKind, Document};
+use asm_lexer::{Document, Lexer, TokenKind};
 use clap::Parser;
-use fmt::{AlignOperandsOpt, FixCase, IndentDirectives};
+use fmt::{AlignOperandsOpt, DedentLabels, FixCase, IndentDirectives};
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug)]
@@ -57,6 +57,9 @@ fn main() {
     let parsed = Lexer::new(&content);
 
     // == apply local rules ==
+
+    let parsed = DedentLabels::new(parsed);
+
     let parsed = FixCase::new(parsed).set_uppercase_tokens(std::mem::take(
         &mut config.uppercase_tokens.unwrap_or_default(),
     ));
