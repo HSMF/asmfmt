@@ -584,16 +584,16 @@ impl<'a> TokenTree<'a> {
                 parenthesis, args, ..
             } => {
                 if let Some((_, r)) = parenthesis {
-                    return r.col + r.text.len() - col;
+                    return r.col + r.perceived_len() - col;
                 }
 
                 let last = &args[args.len() - 1];
                 last.col() + last.width() - col
             }
-            RTokenTree::Single { id } => id.col + id.text.len() - col,
+            RTokenTree::Single { id } => id.col + id.perceived_len() - col,
             RTokenTree::Annotated { actual, .. } => actual.col() + actual.width() - col,
             RTokenTree::EffectiveAddress { brackets, .. } => {
-                brackets.1.col + brackets.1.text.len() - col
+                brackets.1.col + brackets.1.perceived_len() - col
             }
         }
     }

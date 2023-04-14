@@ -182,6 +182,13 @@ impl<'a> Token<'a> {
             ),
         }
     }
+
+    pub fn perceived_len(&self) -> usize {
+        match self.kind {
+            TokenKind::String => self.text.len() + 2,
+            _ => self.text.len(),
+        }
+    }
 }
 
 pub type Span<'a> = LocatedSpan<&'a str>;
