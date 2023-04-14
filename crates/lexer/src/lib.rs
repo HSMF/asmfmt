@@ -29,10 +29,8 @@ use std::borrow::Cow;
 
 use nom::{
     branch::alt,
-    bytes::complete::{
-        tag, tag_no_case, take_until, take_until1, take_while, take_while1, take_while_m_n,
-    },
-    character::complete::{one_of, satisfy},
+    bytes::complete::{tag, tag_no_case, take_until1, take_while, take_while1, take_while_m_n},
+    character::complete::{not_line_ending, one_of, satisfy},
     combinator::{fail, map, not, opt, success},
     error::ParseError,
     multi::{many0, separated_list0, separated_list1},
@@ -222,13 +220,11 @@ fn take_whitespace<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>
     Ok((s, ()))
 }
 
-fn take_until_or_eos<'a, E: ParseError<Span<'a>>>(
-    pat: &'a str,
-) -> impl Fn(Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
-    move |s| match take_until::<_, _, E>(pat)(s) {
-        Ok(x) => Ok(x),
-        Err(_) => Ok((Span::new(""), s)),
-    }
+fn take_until_eol<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
+    dbg!(s);
+    let (s, line) = not_line_ending(s)?;
+    dbg!(s);
+    Ok((s, line))
 }
 
 fn nl<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, (), E> {
@@ -236,7 +232,7 @@ fn nl<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, (), E> {
         return success(())(s);
     }
 
-    let (s, _) = tag("\n")(s)?;
+    let (s, _) = alt((tag("\n"), tag("\r\n")))(s)?;
     Ok((s, ()))
 }
 
@@ -916,7 +912,7 @@ fn parse_decl<'a, E: ParseError<Span<'a>>>(
 fn parse_comment<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, RawToken<'a>, E> {
     let (s, _) = take_whitespace(s)?;
 
-    let (s, comment) = preceded(tag(";"), take_until_or_eos("\n"))(s)?;
+    let (s, comment) = preceded(tag(";"), take_until_eol)(s)?;
     Ok((
         s,
         RawToken {
@@ -1077,8 +1073,8 @@ fn parse_line<'a, E: ParseError<Span<'a>>>(s: Span<'a>) -> IResult<Span<'a>, Raw
             match $e {
                 Ok(x) => x,
                 Err(_) => {
-                    let (rest, invalid) = terminated(take_until_or_eos::<E>("\n"), nl)($s)
-                        .unwrap_or((Span::new(""), $s));
+                    let (rest, invalid) =
+                        terminated(take_until_eol::<E>, nl)($s).unwrap_or((Span::new(""), $s));
 
                     let length =
                         invalid.location_offset() + invalid.len() - beginning.location_offset();
@@ -1264,6 +1260,7 @@ mod tests {
     snap!(hm, "../testdata/hm.asm");
     snap!(directives, "../testdata/directives.asm");
     snap!(numbers, "../testdata/numbers.asm");
+    snap!(hello_crlf, "../testdata/hello-crlf.asm");
 
     mod components {
         use super::*;
